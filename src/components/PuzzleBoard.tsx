@@ -129,7 +129,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           const pathString = getPiecePath(col, row, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT);
           const path = new Path2D(pathString);
 
-          ctx.translate(padding, padding);
           ctx.clip(path);
           ctx.drawImage(
             image,
@@ -656,8 +655,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         {pieceImage && (
           <KonvaImage
             image={pieceImage}
-            x={-tabSize * 2}
-            y={-tabSize * 2}
+            x={-tabSize}
+            y={-tabSize}
             shadowColor={isDragging ? "#3b82f6" : "black"}
             shadowBlur={piece.is_snapped ? 0 : (isDragging ? 20 : 10)}
             shadowOffset={{ x: 0, y: piece.is_snapped ? 0 : (isDragging ? 10 : 5) }}

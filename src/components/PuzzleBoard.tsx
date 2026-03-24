@@ -1241,8 +1241,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         </button>
       </div>
 
-      {/* Minimap for large puzzles */}
-      {totalPieces > 200 && image && (
+      {/* Minimap for all puzzles */}
+      {image && (
         <div className="absolute bottom-6 left-6 z-20 flex flex-col gap-2">
           <div className="bg-slate-800/80 backdrop-blur-md p-2 rounded-xl border border-slate-700 shadow-lg pointer-events-auto">
             <div 

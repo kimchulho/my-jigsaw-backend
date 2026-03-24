@@ -380,14 +380,29 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const handlePiecesState = (data: any[]) => {
       if (data && data.length > 0) {
         if (data.length === GRID_COLS * GRID_ROWS) {
-          const processedData = data.map(p => {
-            const { col, row } = getColRow(p.piece_id);
-            const targetX = col * PIECE_WIDTH;
-            const targetY = row * PIECE_HEIGHT;
-            const is_snapped = Math.abs(p.current_x - targetX) < 1 && Math.abs(p.current_y - targetY) < 1;
-            return { ...p, is_snapped };
+          setPieces(prevPieces => {
+            const processedData = data.map(p => {
+              const { col, row } = getColRow(p.piece_id);
+              const targetX = col * PIECE_WIDTH;
+              const targetY = row * PIECE_HEIGHT;
+              const is_snapped = Math.abs(p.current_x - targetX) < 1 && Math.abs(p.current_y - targetY) < 1;
+              
+              // Prevent rubber-banding: preserve real-time positions of locked pieces
+              const existingPiece = prevPieces.find(prev => prev.piece_id === p.piece_id);
+              if (existingPiece && existingPiece.locked_by) {
+                return { 
+                  ...p, 
+                  is_snapped,
+                  current_x: existingPiece.current_x, 
+                  current_y: existingPiece.current_y,
+                  locked_by: existingPiece.locked_by 
+                };
+              }
+              
+              return { ...p, is_snapped };
+            });
+            return processedData;
           });
-          setPieces(processedData);
         } else {
           if (data.length > 0) {
             const extraIds = data.map(p => p.piece_id);
@@ -456,16 +471,29 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             else draggingGroupRef.current = [];
           }
           
-          setPieces((prev) => {
-            const newPieces = [...prev];
-            for (const up of updatedPieces) {
-              const idx = newPieces.findIndex(p => p.piece_id === up.piece_id);
-              if (idx !== -1) {
-                newPieces[idx] = { ...newPieces[idx], current_x: up.current_x, current_y: up.current_y, locked_by };
+          // 2 & 3: Interpolation and Direct Canvas Manipulation
+          const stage = stageRef.current;
+          if (stage) {
+            updatedPieces.forEach((up: any) => {
+              const node = stage.findOne(`#piece-${up.piece_id}`);
+              if (node) {
+                // Animate smoothly to the new position
+                node.to({
+                  x: up.current_x,
+                  y: up.current_y,
+                  duration: 0.05, // 50ms tween
+                  easing: Konva.Easings.Linear,
+                });
               }
-            }
-            return newPieces;
-          });
+              
+              // Silently update the ref so future React renders don't snap it back
+              const piece = piecesRef.current.find(p => p.piece_id === up.piece_id);
+              if (piece) {
+                piece.current_x = up.current_x;
+                piece.current_y = up.current_y;
+              }
+            });
+          }
         }
       } else if (payload.event === 'piece-lock') {
         const { piece_ids, locked_by } = payload.payload;
@@ -648,7 +676,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
 
     const now = Date.now();
-    if (now - lastBroadcastRef.current > 33) {
+    if (now - lastBroadcastRef.current > 20) {
       socket.emit('broadcast', {
         roomId: roomConfig.roomId,
         event: 'cursor-pos',

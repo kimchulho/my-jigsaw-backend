@@ -21,12 +21,13 @@ const memoryRooms = new Map<string, any>();
 const memoryPieces = new Map<string, any[]>();
 const memoryScores = new Map<string, { score: number }>();
 
-async function getRoomsFromDB() {
+async function getRoomsFromDB(io?: Server) {
   if (!supabase) {
     return Array.from(memoryRooms.values()).map(r => {
       const pieces = memoryPieces.get(r.roomId) || [];
       const snappedCount = pieces.filter((p: any) => p.is_snapped).length;
-      return { ...r, snappedCount, totalPieces: r.cols * r.rows };
+      const currentPlayers = io ? (io.sockets.adapter.rooms.get(`room_${r.roomId}`)?.size || 0) : 0;
+      return { ...r, snappedCount, totalPieces: r.cols * r.rows, hasPassword: !!r.password, currentPlayers };
     }).sort((a, b) => b.createdAt - a.createdAt);
   }
   const { data, error } = await supabase.from('puzzle_rooms').select('*').order('created_at', { ascending: false });
@@ -35,7 +36,8 @@ async function getRoomsFromDB() {
     return Array.from(memoryRooms.values()).map(r => {
       const pieces = memoryPieces.get(r.roomId) || [];
       const snappedCount = pieces.filter((p: any) => p.is_snapped).length;
-      return { ...r, snappedCount, totalPieces: r.cols * r.rows };
+      const currentPlayers = io ? (io.sockets.adapter.rooms.get(`room_${r.roomId}`)?.size || 0) : 0;
+      return { ...r, snappedCount, totalPieces: r.cols * r.rows, hasPassword: !!r.password, currentPlayers };
     }).sort((a, b) => b.createdAt - a.createdAt);
   }
   
@@ -47,7 +49,9 @@ async function getRoomsFromDB() {
     cols: r.cols,
     rows: r.rows,
     creator: r.creator,
-    createdAt: Number(r.created_at)
+    createdAt: Number(r.created_at),
+    maxPlayers: r.max_players || 8,
+    hasPassword: !!r.password
   }));
 
   // Fetch progress for each room
@@ -62,10 +66,13 @@ async function getRoomsFromDB() {
       console.error(`Error fetching progress for room ${r.roomId}:`, countError.message);
     }
     
+    const currentPlayers = io ? (io.sockets.adapter.rooms.get(`room_${r.roomId}`)?.size || 0) : 0;
+    
     return {
       ...r,
       snappedCount: count || 0,
-      totalPieces: (r.cols && r.rows) ? (r.cols * r.rows) : r.gridSize
+      totalPieces: (r.cols && r.rows) ? (r.cols * r.rows) : r.gridSize,
+      currentPlayers
     };
   }));
 
@@ -105,11 +112,11 @@ async function startServer() {
     console.log('User connected:', socket.id);
 
     // Send current rooms to the newly connected user
-    const initialRooms = await getRoomsFromDB();
+    const initialRooms = await getRoomsFromDB(io);
     socket.emit('rooms_list', initialRooms);
 
     socket.on('get_rooms', async () => {
-      const rooms = await getRoomsFromDB();
+      const rooms = await getRoomsFromDB(io);
       socket.emit('rooms_list', rooms);
     });
 
@@ -124,7 +131,9 @@ async function startServer() {
           cols: roomData.cols,
           rows: roomData.rows,
           creator: roomData.creator,
-          created_at: roomData.createdAt
+          created_at: roomData.createdAt,
+          max_players: roomData.maxPlayers || 8,
+          password: roomData.password || null
         });
         if (error) {
           console.error('Error creating room in Supabase:', error.message);
@@ -141,19 +150,22 @@ async function startServer() {
           cols: roomData.cols,
           rows: roomData.rows,
           creator: roomData.creator,
-          createdAt: roomData.createdAt
+          createdAt: roomData.createdAt,
+          maxPlayers: roomData.maxPlayers || 8,
+          password: roomData.password || null
         });
         memoryPieces.set(roomData.id, []);
       }
       
-      const rooms = await getRoomsFromDB();
+      const rooms = await getRoomsFromDB(io);
       io.emit('rooms_list', rooms);
     });
 
-    socket.on('join_room', async (roomId: string) => {
-      socket.join(`room_${roomId}`);
+    socket.on('join_room', async (payload: any, callback?: (res: any) => void) => {
+      const roomId = typeof payload === 'string' ? payload : payload.roomId;
+      const password = typeof payload === 'string' ? undefined : payload.password;
       
-      let room = null;
+      let roomData = null;
       let useMemory = !supabase;
 
       if (supabase) {
@@ -162,47 +174,77 @@ async function startServer() {
           console.error('Error joining room in Supabase:', error.message);
           useMemory = true;
         } else if (data) {
-          room = {
-            id: data.id,
-            name: data.name,
-            imageUrl: data.image_url,
-            gridSize: data.grid_size,
-            cols: data.cols,
-            rows: data.rows,
-            creator: data.creator,
-            createdAt: Number(data.created_at),
-            pieces: await getPiecesFromDB(roomId)
-          };
+          roomData = data;
         }
       }
 
       if (useMemory && memoryRooms.has(roomId)) {
         const memRoom = memoryRooms.get(roomId);
-        room = {
+        roomData = {
           id: memRoom.roomId,
           name: memRoom.name,
-          imageUrl: memRoom.imageUrl,
-          gridSize: memRoom.gridSize,
+          image_url: memRoom.imageUrl,
+          grid_size: memRoom.gridSize,
           cols: memRoom.cols,
           rows: memRoom.rows,
           creator: memRoom.creator,
-          createdAt: memRoom.createdAt,
-          pieces: await getPiecesFromDB(roomId)
+          created_at: memRoom.createdAt,
+          max_players: memRoom.maxPlayers,
+          password: memRoom.password
         };
       }
 
-      if (room) {
-        socket.emit('room_state', room);
+      if (!roomData) {
+        if (callback) callback({ success: false, message: 'Room not found' });
+        return;
       }
+
+      const currentPlayers = io.sockets.adapter.rooms.get(`room_${roomId}`)?.size || 0;
+      const maxPlayers = roomData.max_players || 8;
+      
+      // Allow joining if already in the room (e.g. reconnecting)
+      const isAlreadyInRoom = socket.rooms.has(`room_${roomId}`);
+      if (!isAlreadyInRoom && currentPlayers >= maxPlayers) {
+        if (callback) callback({ success: false, message: 'Room is full' });
+        return;
+      }
+
+      if (roomData.password && roomData.password !== password) {
+        if (callback) callback({ success: false, message: 'Incorrect password' });
+        return;
+      }
+
+      socket.join(`room_${roomId}`);
+      
+      const room = {
+        id: roomData.id,
+        name: roomData.name,
+        imageUrl: roomData.image_url,
+        gridSize: roomData.grid_size,
+        cols: roomData.cols,
+        rows: roomData.rows,
+        creator: roomData.creator,
+        createdAt: Number(roomData.created_at),
+        pieces: await getPiecesFromDB(roomId)
+      };
+
+      socket.emit('room_state', room);
+      if (callback) callback({ success: true });
 
       const count = io.sockets.adapter.rooms.get(`room_${roomId}`)?.size || 0;
       io.to(`room_${roomId}`).emit('player_count', count);
+      
+      const rooms = await getRoomsFromDB(io);
+      io.emit('rooms_list', rooms);
     });
 
-    socket.on('leave_room', (roomId: string) => {
+    socket.on('leave_room', async (roomId: string) => {
       socket.leave(`room_${roomId}`);
       const count = io.sockets.adapter.rooms.get(`room_${roomId}`)?.size || 0;
       io.to(`room_${roomId}`).emit('player_count', count);
+      
+      const rooms = await getRoomsFromDB(io);
+      io.emit('rooms_list', rooms);
     });
 
     socket.on('get_pieces', async (roomId: string) => {
@@ -278,17 +320,17 @@ async function startServer() {
           .single();
           
         if (!error && data) {
-          score = data.score;
+          score = data.score || 0;
         } else {
           const mem = memoryScores.get(`${roomId}_${username}`);
           if (mem) {
-            score = mem.score;
+            score = mem.score || 0;
           }
         }
       } else {
         const mem = memoryScores.get(`${roomId}_${username}`);
         if (mem) {
-          score = mem.score;
+          score = mem.score || 0;
         }
       }
       
@@ -303,13 +345,13 @@ async function startServer() {
           .select('username, score')
           .eq('room_id', roomId);
         if (!error && data) {
-          scores = data;
+          scores = data.map(d => ({ ...d, score: d.score || 0 }));
         }
       } else {
         for (const [key, val] of memoryScores.entries()) {
           if (key.startsWith(`${roomId}_`)) {
             const username = key.replace(`${roomId}_`, '');
-            scores.push({ username, score: val.score });
+            scores.push({ username, score: val.score || 0 });
           }
         }
       }
@@ -343,7 +385,7 @@ async function startServer() {
       socket.to(`room_${payload.roomId}`).emit('broadcast', payload);
     });
 
-    socket.on('disconnecting', () => {
+    socket.on('disconnecting', async () => {
       for (const room of socket.rooms) {
         if (room.startsWith('room_')) {
           const roomId = room.replace('room_', '');
@@ -353,8 +395,10 @@ async function startServer() {
       }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log('User disconnected:', socket.id);
+      const rooms = await getRoomsFromDB(io);
+      io.emit('rooms_list', rooms);
     });
   });
 

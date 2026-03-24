@@ -16,6 +16,8 @@ export default function App() {
     imageUrl: string;
     cols: number;
     rows: number;
+    maxPlayers?: number;
+    password?: string;
   } | null>(null);
 
   useEffect(() => {

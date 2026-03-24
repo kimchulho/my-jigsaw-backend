@@ -8,6 +8,8 @@ interface RoomConfig {
   imageUrl: string;
   cols: number;
   rows: number;
+  maxPlayers?: number;
+  password?: string;
 }
 
 interface RoomMetadata extends RoomConfig {
@@ -15,6 +17,8 @@ interface RoomMetadata extends RoomConfig {
   createdAt: number;
   snappedCount?: number;
   totalPieces?: number;
+  hasPassword?: boolean;
+  currentPlayers?: number;
 }
 
 interface HomeProps {
@@ -44,7 +48,9 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
   // Room creation state
   const [isCreating, setIsCreating] = useState(!existingRoom);
   const [imageUrl, setImageUrl] = useState('https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg');
-  const [pieceCount, setPieceCount] = useState<number>(150);
+  const [pieceCount, setPieceCount] = useState<number>(100);
+  const [maxPlayers, setMaxPlayers] = useState<number>(8);
+  const [password, setPassword] = useState<string>('');
   const [isCalculating, setIsCalculating] = useState(false);
   const [activeRooms, setActiveRooms] = useState<RoomMetadata[]>([]);
   const [hasLoadedRooms, setHasLoadedRooms] = useState(false);
@@ -113,6 +119,8 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
         rows: finalRows,
         creator: finalUsername,
         createdAt: Date.now(),
+        maxPlayers,
+        password: password.trim() || undefined,
         pieces: [] // Will be initialized by the first player joining
       };
 
@@ -122,7 +130,9 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
         roomId,
         imageUrl,
         cols: finalCols,
-        rows: finalRows
+        rows: finalRows,
+        maxPlayers,
+        password: password.trim() || undefined
       });
       setIsCalculating(false);
     };
@@ -146,11 +156,25 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
     const foundRoom = activeRooms.find(r => r.roomId === existingRoom);
     
     if (foundRoom) {
+      if (foundRoom.currentPlayers && foundRoom.maxPlayers && foundRoom.currentPlayers >= foundRoom.maxPlayers) {
+        alert('This room is full.');
+        return;
+      }
+      
+      let joinPassword = undefined;
+      if (foundRoom.hasPassword) {
+        const pwd = prompt('Enter room password:');
+        if (pwd === null) return;
+        joinPassword = pwd;
+      }
+
       onEnter(finalUsername, {
         roomId: foundRoom.roomId,
         imageUrl: foundRoom.imageUrl,
         cols: foundRoom.cols,
-        rows: foundRoom.rows
+        rows: foundRoom.rows,
+        maxPlayers: foundRoom.maxPlayers,
+        password: joinPassword
       });
     } else {
       alert('방을 찾을 수 없습니다. 이미 삭제되었거나 존재하지 않는 방입니다.');
@@ -166,13 +190,28 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
       return;
     }
     
+    if (room.currentPlayers && room.maxPlayers && room.currentPlayers >= room.maxPlayers) {
+      alert('This room is full.');
+      return;
+    }
+
     if (!finalUsername.includes('#')) {
       finalUsername = `${finalUsername}#${getBrowserTag()}`;
       setUsername(finalUsername);
       localStorage.setItem('puzzle_username', finalUsername);
     }
     
-    onEnter(finalUsername, room);
+    let joinPassword = undefined;
+    if (room.hasPassword) {
+      const pwd = prompt('Enter room password:');
+      if (pwd === null) return;
+      joinPassword = pwd;
+    }
+
+    onEnter(finalUsername, {
+      ...room,
+      password: joinPassword
+    });
   };
 
   return (
@@ -224,8 +263,8 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                 <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
                   <Grid className="w-4 h-4" /> Target Piece Count
                 </label>
-                <div className="grid grid-cols-5 gap-2">
-                  {[20, 150, 300, 500, 1000].map(count => (
+                <div className="grid grid-cols-6 gap-2">
+                  {[20, 100, 150, 300, 500, 1000].map(count => (
                     <button
                       key={count}
                       onClick={() => setPieceCount(count)}
@@ -242,6 +281,36 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                 <p className="text-xs text-slate-500 mt-2">
                   Actual count may vary slightly to maintain square pieces based on image aspect ratio.
                 </p>
+              </div>
+
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                    <Users className="w-4 h-4" /> Max Players
+                  </label>
+                  <select
+                    value={maxPlayers}
+                    onChange={(e) => setMaxPlayers(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
+                      <option key={num} value={num}>{num} {num === 1 ? 'Player' : 'Players'}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Password (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Leave empty for public"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -317,9 +386,16 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent" />
                       <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
-                        <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-white px-2 py-1 rounded-md border border-slate-700">
-                          {room.cols * room.rows} Pieces
-                        </span>
+                        <div className="flex gap-2 items-center">
+                          <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-white px-2 py-1 rounded-md border border-slate-700">
+                            {room.cols * room.rows} Pieces
+                          </span>
+                          {room.hasPassword && (
+                            <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-amber-400 px-2 py-1 rounded-md border border-slate-700 flex items-center gap-1">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            </span>
+                          )}
+                        </div>
                         <span className="text-xs text-slate-300 flex items-center gap-1 drop-shadow-md">
                           <Users className="w-3 h-3" /> Created by {room.creator}
                         </span>
@@ -335,7 +411,14 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                     )}
                     <div className="p-4 flex items-center justify-between">
                       <div className="text-left">
-                        <p className="text-sm font-medium text-slate-300">Room #{room.roomId}</p>
+                        <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                          Room #{room.roomId}
+                          {room.currentPlayers !== undefined && room.maxPlayers !== undefined && (
+                            <span className={`text-xs px-1.5 py-0.5 rounded-md ${room.currentPlayers >= room.maxPlayers ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                              {room.currentPlayers}/{room.maxPlayers}
+                            </span>
+                          )}
+                        </p>
                         {room.snappedCount !== undefined && room.totalPieces !== undefined && (
                           <p className="text-xs text-indigo-400 font-medium mt-1">
                             {Math.round((room.snappedCount / room.totalPieces) * 100)}% Complete ({room.snappedCount}/{room.totalPieces})

@@ -25,6 +25,8 @@ interface RoomConfig {
   imageUrl: string;
   cols: number;
   rows: number;
+  maxPlayers?: number;
+  password?: string;
 }
 
 interface PuzzleBoardProps {
@@ -126,8 +128,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
   const totalPieces = GRID_COLS * GRID_ROWS;
-  const isSmallPuzzle = totalPieces <= 200;
-  const [showBoardBackground, setShowBoardBackground] = useState(isSmallPuzzle);
+  const isSmallPuzzle = totalPieces <= 100;
+  const [showBoardBackground, setShowBoardBackground] = useState(false);
   
   const bgColors = [
     'bg-slate-900',
@@ -308,7 +310,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const handleReconnect = () => {
     setIsIdleDisconnected(false);
     socket.connect();
-    socket.emit('join_room', roomConfig.roomId);
+    socket.emit('join_room', { roomId: roomConfig.roomId, password: roomConfig.password }, (res: any) => {
+      if (res && !res.success) {
+        alert(res.message || 'Failed to reconnect to room');
+        if (onBack) onBack();
+      }
+    });
     socket.emit('get_pieces', roomConfig.roomId);
     resetIdleTimer();
   };
@@ -374,7 +381,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       socket.connect();
     }
 
-    socket.emit('join_room', roomConfig.roomId);
+    socket.emit('join_room', { roomId: roomConfig.roomId, password: roomConfig.password }, (res: any) => {
+      if (res && !res.success) {
+        alert(res.message || 'Failed to join room');
+        if (onBack) onBack();
+      }
+    });
 
     const handlePiecesState = (data: any[]) => {
       if (data && data.length > 0) {
@@ -437,11 +449,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     socket.emit('get_pieces', roomConfig.roomId);
 
     const handleScoreState = (data: { score: number }) => {
-      setScore(data.score);
+      setScore(data.score || 0);
     };
     
     const handleAllScores = (scores: {username: string, score: number}[]) => {
-      const sorted = scores.sort((a, b) => b.score - a.score);
+      const validScores = scores.map(s => ({ ...s, score: s.score || 0 }));
+      const sorted = validScores.sort((a, b) => b.score - a.score);
       setLeaderboard(sorted);
     };
 
@@ -1040,7 +1053,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             {(() => {
               const displayLeaderboard = [...leaderboard];
               if (!displayLeaderboard.find(p => p.username === username)) {
-                displayLeaderboard.push({ username, score });
+                displayLeaderboard.push({ username, score: score || 0 });
                 displayLeaderboard.sort((a, b) => b.score - a.score);
               }
               return displayLeaderboard.map((player, idx) => {

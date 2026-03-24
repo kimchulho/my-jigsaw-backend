@@ -10,6 +10,7 @@ import Home from './components/Home';
 export default function App() {
   const [view, setView] = useState<'home' | 'puzzle'>('home');
   const [username, setUsername] = useState('Anonymous');
+  const [existingRoomId, setExistingRoomId] = useState<string | undefined>(undefined);
   const [roomConfig, setRoomConfig] = useState<{
     roomId: string;
     imageUrl: string;
@@ -20,17 +21,8 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
-    const img = params.get('img');
-    const cols = params.get('cols');
-    const rows = params.get('rows');
-
-    if (room && img && cols && rows) {
-      setRoomConfig({
-        roomId: room,
-        imageUrl: img,
-        cols: parseInt(cols, 10),
-        rows: parseInt(rows, 10),
-      });
+    if (room) {
+      setExistingRoomId(room);
     }
   }, []);
 
@@ -38,13 +30,13 @@ export default function App() {
     <>
       {view === 'home' && (
         <Home 
-          existingRoom={roomConfig?.roomId} 
+          existingRoom={existingRoomId} 
           onEnter={(name, config) => { 
             setUsername(name); 
             if (config) {
               setRoomConfig(config);
               // Update URL without reloading
-              const newUrl = `${window.location.pathname}?room=${config.roomId}&img=${encodeURIComponent(config.imageUrl)}&cols=${config.cols}&rows=${config.rows}`;
+              const newUrl = `${window.location.pathname}?room=${config.roomId}`;
               window.history.pushState({ path: newUrl }, '', newUrl);
             }
             setView('puzzle'); 
@@ -60,6 +52,7 @@ export default function App() {
             // Clear URL
             window.history.pushState({ path: window.location.pathname }, '', window.location.pathname);
             setRoomConfig(null);
+            setExistingRoomId(undefined);
           }} 
         />
       )}

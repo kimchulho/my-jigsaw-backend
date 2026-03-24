@@ -19,7 +19,7 @@ if (!supabase) {
 // In-memory fallback
 const memoryRooms = new Map<string, any>();
 const memoryPieces = new Map<string, any[]>();
-const memoryScores = new Map<string, { board_score: number, connection_score: number }>();
+const memoryScores = new Map<string, { score: number }>();
 
 async function getRoomsFromDB() {
   if (!supabase) {
@@ -267,36 +267,32 @@ async function startServer() {
     });
 
     socket.on('get_score', async ({ roomId, username }: { roomId: string, username: string }) => {
-      let boardScore = 0;
-      let connectionScore = 0;
+      let score = 0;
       
       if (supabase) {
         const { data, error } = await supabase
           .from('puzzle_scores')
-          .select('board_score, connection_score')
+          .select('score')
           .eq('room_id', roomId)
           .eq('username', username)
           .single();
           
         if (!error && data) {
-          boardScore = data.board_score;
-          connectionScore = data.connection_score;
+          score = data.score;
         } else {
           const mem = memoryScores.get(`${roomId}_${username}`);
           if (mem) {
-            boardScore = mem.board_score;
-            connectionScore = mem.connection_score;
+            score = mem.score;
           }
         }
       } else {
         const mem = memoryScores.get(`${roomId}_${username}`);
         if (mem) {
-          boardScore = mem.board_score;
-          connectionScore = mem.connection_score;
+          score = mem.score;
         }
       }
       
-      socket.emit('score_state', { boardScore, connectionScore });
+      socket.emit('score_state', { score });
     });
 
     const broadcastAllScores = async (roomId: string) => {
@@ -304,7 +300,7 @@ async function startServer() {
       if (supabase) {
         const { data, error } = await supabase
           .from('puzzle_scores')
-          .select('username, board_score, connection_score')
+          .select('username, score')
           .eq('room_id', roomId);
         if (!error && data) {
           scores = data;
@@ -313,7 +309,7 @@ async function startServer() {
         for (const [key, val] of memoryScores.entries()) {
           if (key.startsWith(`${roomId}_`)) {
             const username = key.replace(`${roomId}_`, '');
-            scores.push({ username, board_score: val.board_score, connection_score: val.connection_score });
+            scores.push({ username, score: val.score });
           }
         }
       }
@@ -324,22 +320,21 @@ async function startServer() {
       await broadcastAllScores(roomId);
     });
 
-    socket.on('update_score', async ({ roomId, username, boardScore, connectionScore }: { roomId: string, username: string, boardScore: number, connectionScore: number }) => {
+    socket.on('update_score', async ({ roomId, username, score }: { roomId: string, username: string, score: number }) => {
       if (supabase) {
         const { error } = await supabase
           .from('puzzle_scores')
           .upsert({
             room_id: roomId,
             username: username,
-            board_score: boardScore,
-            connection_score: connectionScore
+            score: score
           }, { onConflict: 'room_id,username' });
           
         if (error) {
           console.error('Error upserting score:', error.message);
         }
       }
-      memoryScores.set(`${roomId}_${username}`, { board_score: boardScore, connection_score: connectionScore });
+      memoryScores.set(`${roomId}_${username}`, { score });
       await broadcastAllScores(roomId);
     });
 

@@ -32,7 +32,6 @@ const getBrowserTag = () => {
 };
 
 export default function Home({ existingRoom, onEnter }: HomeProps) {
-  const [playerCount, setPlayerCount] = useState<number>(0);
   const [isConnecting, setIsConnecting] = useState(true);
   const [username, setUsername] = useState(() => {
     return localStorage.getItem('puzzle_username') || `익명#${getBrowserTag()}`;
@@ -48,6 +47,10 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
   const [pieceCount, setPieceCount] = useState<number>(150);
   const [isCalculating, setIsCalculating] = useState(false);
   const [activeRooms, setActiveRooms] = useState<RoomMetadata[]>([]);
+  const [hasLoadedRooms, setHasLoadedRooms] = useState(false);
+
+  const foundRoom = existingRoom ? activeRooms.find(r => r.roomId === existingRoom) : undefined;
+  const isInvalidRoom = existingRoom && hasLoadedRooms && !foundRoom;
 
   useEffect(() => {
     socket.on('connect', () => {
@@ -59,6 +62,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
       // Sort by newest first
       rooms.sort((a, b) => b.createdAt - a.createdAt);
       setActiveRooms(rooms);
+      setHasLoadedRooms(true);
     });
 
     if (socket.connected) {
@@ -139,8 +143,20 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
       localStorage.setItem('puzzle_username', finalUsername);
     }
     
-    // If joining an existing room, the config is already in App.tsx state
-    onEnter(finalUsername);
+    const foundRoom = activeRooms.find(r => r.roomId === existingRoom);
+    
+    if (foundRoom) {
+      onEnter(finalUsername, {
+        roomId: foundRoom.roomId,
+        imageUrl: foundRoom.imageUrl,
+        cols: foundRoom.cols,
+        rows: foundRoom.rows
+      });
+    } else {
+      alert('방을 찾을 수 없습니다. 이미 삭제되었거나 존재하지 않는 방입니다.');
+      window.history.pushState({}, '', window.location.pathname);
+      window.location.reload();
+    }
   };
 
   const handleJoinSpecificRoom = (room: RoomMetadata) => {
@@ -230,34 +246,30 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
             </div>
           )}
 
-          {existingRoom && (
-            <div className="bg-slate-950 rounded-2xl p-4 mb-8 flex items-center justify-between border border-slate-800/50">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center">
-                  <Users className="w-5 h-5 text-emerald-400" />
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-medium text-slate-300">Active Players</p>
-                  <p className="text-xs text-slate-500">Currently in the room</p>
-                </div>
-              </div>
-              <div className="text-2xl font-bold text-emerald-400">
-                {isConnecting ? (
-                  <span className="text-slate-600 animate-pulse">...</span>
-                ) : (
-                  playerCount
-                )}
-              </div>
+          {/* Removed Active Players section as it's not tracked in Home.tsx */}
+          
+          {isInvalidRoom && (
+            <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-4 rounded-xl mb-6 text-sm text-center">
+              방을 찾을 수 없습니다. 이미 삭제되었거나 존재하지 않는 방입니다.
+              <button 
+                onClick={() => {
+                  window.history.pushState({}, '', window.location.pathname);
+                  window.location.reload();
+                }}
+                className="block w-full mt-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 py-2 rounded-lg transition-colors"
+              >
+                새로운 방 만들기
+              </button>
             </div>
           )}
           
           <button
             onClick={existingRoom ? handleJoinRoom : handleCreateRoom}
-            disabled={isConnecting || isCalculating || !username.trim()}
+            disabled={isConnecting || isCalculating || !username.trim() || (existingRoom ? !hasLoadedRooms : false) || isInvalidRoom}
             className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-500 text-white font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
           >
             {existingRoom ? <Play className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
-            {isConnecting ? 'Connecting...' : isCalculating ? 'Calculating...' : existingRoom ? 'Join Puzzle Room' : 'Create Room'}
+            {isConnecting ? 'Connecting...' : (existingRoom && !hasLoadedRooms) ? 'Loading room info...' : isCalculating ? 'Calculating...' : isInvalidRoom ? 'Invalid Room' : existingRoom ? 'Join Puzzle Room' : 'Create Room'}
           </button>
         </div>
 

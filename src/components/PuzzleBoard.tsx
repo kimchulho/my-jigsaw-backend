@@ -142,9 +142,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const stagePos = useRef({ x: 0, y: 0 });
   
   const [playerCount, setPlayerCount] = useState(1);
-  const [boardScore, setBoardScore] = useState(0);
-  const [connectionScore, setConnectionScore] = useState(0);
-  const [leaderboard, setLeaderboard] = useState<{username: string, board_score: number, connection_score: number}[]>([]);
+  const [score, setScore] = useState(0);
+  const [leaderboard, setLeaderboard] = useState<{username: string, score: number}[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   
   const containerRef = useRef<HTMLDivElement>(null);
@@ -437,13 +436,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     socket.on('pieces_state', handlePiecesState);
     socket.emit('get_pieces', roomConfig.roomId);
 
-    const handleScoreState = (data: { boardScore: number, connectionScore: number }) => {
-      setBoardScore(data.boardScore);
-      setConnectionScore(data.connectionScore);
+    const handleScoreState = (data: { score: number }) => {
+      setScore(data.score);
     };
     
-    const handleAllScores = (scores: {username: string, board_score: number, connection_score: number}[]) => {
-      const sorted = scores.sort((a, b) => (b.board_score + b.connection_score) - (a.board_score + a.connection_score));
+    const handleAllScores = (scores: {username: string, score: number}[]) => {
+      const sorted = scores.sort((a, b) => b.score - a.score);
       setLeaderboard(sorted);
     };
 
@@ -513,8 +511,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           }
           const stage = stageRef.current;
           if (stage) {
-            const dragLayer = stage.findOne('#drag-layer');
-            const idleLayer = stage.findOne('#idle-layer');
+            const dragLayer = stage.findOne('#drag-layer') as any;
+            const idleLayer = stage.findOne('#idle-layer') as any;
             if (dragLayer && idleLayer) {
               piece_ids.forEach((id: number) => {
                 const node = stage.findOne(`#piece-${id}`);
@@ -532,8 +530,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         const { pieces: droppedPieces } = payload.payload;
         const stage = stageRef.current;
         if (stage) {
-          const idleLayer = stage.findOne('#idle-layer');
-          const dragLayer = stage.findOne('#drag-layer');
+          const idleLayer = stage.findOne('#idle-layer') as any;
+          const dragLayer = stage.findOne('#drag-layer') as any;
           if (idleLayer && dragLayer) {
             droppedPieces.forEach((dp: any) => {
               const node = stage.findOne(`#piece-${dp.piece_id}`);
@@ -612,8 +610,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     const stage = e.target.getStage();
     if (stage) {
-      const dragLayer = stage.findOne('#drag-layer');
-      const idleLayer = stage.findOne('#idle-layer');
+      const dragLayer = stage.findOne('#drag-layer') as any;
+      const idleLayer = stage.findOne('#idle-layer') as any;
       
       if (dragLayer && idleLayer) {
         groupIds.forEach(id => {
@@ -692,8 +690,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     const stage = e.target.getStage();
     if (stage) {
-      const idleLayer = stage.findOne('#idle-layer');
-      const dragLayer = stage.findOne('#drag-layer');
+      const idleLayer = stage.findOne('#idle-layer') as any;
+      const dragLayer = stage.findOne('#drag-layer') as any;
       
       if (idleLayer && dragLayer) {
         groupIds.forEach(id => {
@@ -778,17 +776,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
 
     const finalPieces: any[] = [];
-    let newBoardScore = boardScore;
-    let newConnectionScore = connectionScore;
+    let newScore = score;
 
     for (const p of piecesRef.current) {
       if (groupIds.includes(p.piece_id)) {
         const finalX = p.current_x + deltaX + dx;
         const finalY = p.current_y + deltaY + dy;
-        
-        if (isSnapped && !p.is_snapped) {
-          newBoardScore += 1;
-        }
         
         finalPieces.push({ 
           piece_id: p.piece_id, 
@@ -800,19 +793,16 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       }
     }
     
-    if (snappedToAdjacent) {
-      newConnectionScore += 1;
+    if (isSnapped || snappedToAdjacent) {
+      newScore += 1;
     }
 
-    if (newBoardScore !== boardScore) setBoardScore(newBoardScore);
-    if (newConnectionScore !== connectionScore) setConnectionScore(newConnectionScore);
-    
-    if (newBoardScore !== boardScore || newConnectionScore !== connectionScore) {
+    if (newScore !== score) {
+      setScore(newScore);
       socket.emit('update_score', { 
         roomId: roomConfig.roomId, 
         username, 
-        boardScore: newBoardScore, 
-        connectionScore: newConnectionScore 
+        score: newScore 
       });
     }
 
@@ -1050,11 +1040,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             {(() => {
               const displayLeaderboard = [...leaderboard];
               if (!displayLeaderboard.find(p => p.username === username)) {
-                displayLeaderboard.push({ username, board_score: boardScore, connection_score: connectionScore });
-                displayLeaderboard.sort((a, b) => (b.board_score + b.connection_score) - (a.board_score + a.connection_score));
+                displayLeaderboard.push({ username, score });
+                displayLeaderboard.sort((a, b) => b.score - a.score);
               }
               return displayLeaderboard.map((player, idx) => {
-                const totalScore = player.board_score + player.connection_score;
                 return (
                   <div key={player.username} className={`flex items-center justify-between p-1.5 rounded-md ${player.username === username ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-slate-700/30'}`}>
                     <div className="flex items-center gap-2">
@@ -1071,14 +1060,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
                       </div>
                     </div>
                     <div className="flex flex-col items-end leading-tight">
-                      <span className="text-white text-sm font-bold">{totalScore}</span>
-                      <span className="text-[10px] text-slate-400">B:{player.board_score} C:{player.connection_score}</span>
+                      <span className="text-white text-sm font-bold">{player.score}</span>
                     </div>
                   </div>
                 );
               });
             })()}
-            {leaderboard.length === 0 && boardScore === 0 && connectionScore === 0 && (
+            {leaderboard.length === 0 && score === 0 && (
               <div className="text-slate-500 text-xs text-center py-2">No scores yet</div>
             )}
           </div>

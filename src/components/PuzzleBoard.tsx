@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -143,6 +143,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [playerCount, setPlayerCount] = useState(1);
   const [boardScore, setBoardScore] = useState(0);
   const [connectionScore, setConnectionScore] = useState(0);
+  const [leaderboard, setLeaderboard] = useState<{username: string, board_score: number, connection_score: number}[]>([]);
+  const [showLeaderboard, setShowLeaderboard] = useState(true);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -423,12 +425,20 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       setConnectionScore(data.connectionScore);
     };
     
+    const handleAllScores = (scores: {username: string, board_score: number, connection_score: number}[]) => {
+      const sorted = scores.sort((a, b) => (b.board_score + b.connection_score) - (a.board_score + a.connection_score));
+      setLeaderboard(sorted);
+    };
+
     socket.on('score_state', handleScoreState);
+    socket.on('all_scores', handleAllScores);
     socket.emit('get_score', { roomId: roomConfig.roomId, username });
+    socket.emit('get_all_scores', roomConfig.roomId);
 
     return () => {
       socket.off('pieces_state', handlePiecesState);
       socket.off('score_state', handleScoreState);
+      socket.off('all_scores', handleAllScores);
     };
   }, [roomConfig.roomId, GRID_COLS, GRID_ROWS, BOARD_WIDTH, BOARD_HEIGHT, getColRow]);
 
@@ -969,50 +979,64 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               Back
             </button>
           )}
-          <button 
-            onClick={async () => {
-              const totalPieces = GRID_COLS * GRID_ROWS;
-              const scatterPositions = getScatterPositions(totalPieces);
-              const resetPieces = pieces.map((p, i) => {
-                return {
-                  ...p,
-                  current_x: scatterPositions[i].x,
-                  current_y: scatterPositions[i].y,
-                  locked_by: null,
-                  is_snapped: false
-                };
-              });
-              setPieces(resetPieces);
-              socket.emit('broadcast', {
-                roomId: roomConfig.roomId,
-                event: 'board-reset',
-                payload: { pieces: resetPieces },
-              });
-              socket.emit('upsert_pieces', { roomId: roomConfig.roomId, pieces: resetPieces });
-              
-              // Re-fit the view to show all pieces
-              setTimeout(() => fitViewToPieces(resetPieces), 50);
-            }}
-            className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 text-slate-300 text-sm transition-colors"
-          >
-            Reset Puzzle
-          </button>
-          <div className="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 flex items-center gap-2">
-            <span className="text-indigo-400 font-medium text-sm">{username}</span>
-            <span className="text-slate-500">|</span>
-            <span className="text-white text-sm">Board: {boardScore}</span>
-            <span className="text-white text-sm">Conn: {connectionScore}</span>
-          </div>
-          <div className="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-            <span className="text-white font-medium text-sm">{playerCount} Player{playerCount !== 1 ? 's' : ''}</span>
-          </div>
           <div className="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700">
             <span className="text-white font-medium">{completedCount} / {GRID_COLS * GRID_ROWS}</span>
             <span className="text-slate-400 ml-2 text-sm">Pieces Placed</span>
           </div>
+          <button
+            onClick={() => setShowLeaderboard(true)}
+            className="bg-slate-800/80 hover:bg-slate-700 transition-colors backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 flex items-center gap-2 cursor-pointer"
+          >
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+            <span className="text-white font-medium text-sm">{playerCount} Player{playerCount !== 1 ? 's' : ''}</span>
+          </button>
         </div>
       </div>
+
+      {showLeaderboard && (
+        <div className="absolute top-20 right-4 z-50 bg-slate-800/90 backdrop-blur-xl rounded-xl border border-slate-700 p-3 w-56 shadow-2xl">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-white text-sm font-bold flex items-center gap-1.5">
+              <Trophy className="w-4 h-4 text-yellow-400" />
+              Leaderboard
+            </h3>
+            <button onClick={() => setShowLeaderboard(false)} className="text-slate-400 hover:text-white transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+            {(() => {
+              const displayLeaderboard = [...leaderboard];
+              if (!displayLeaderboard.find(p => p.username === username)) {
+                displayLeaderboard.push({ username, board_score: boardScore, connection_score: connectionScore });
+                displayLeaderboard.sort((a, b) => (b.board_score + b.connection_score) - (a.board_score + a.connection_score));
+              }
+              return displayLeaderboard.map((player, idx) => {
+                const totalScore = player.board_score + player.connection_score;
+                return (
+                  <div key={player.username} className={`flex items-center justify-between p-1.5 rounded-md ${player.username === username ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-slate-700/30'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className={`font-bold text-xs w-4 text-center ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-gray-300' : idx === 2 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {idx + 1}
+                      </span>
+                      <span className={`truncate max-w-[80px] text-sm ${player.username === username ? 'text-indigo-300 font-semibold' : 'text-slate-200'}`}>
+                        {player.username}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end leading-tight">
+                      <span className="text-white text-sm font-bold">{totalScore}</span>
+                      <span className="text-[10px] text-slate-400">B:{player.board_score} C:{player.connection_score}</span>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+            {leaderboard.length === 0 && boardScore === 0 && connectionScore === 0 && (
+              <div className="text-slate-500 text-xs text-center py-2">No scores yet</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {isCompleted && (
         <div className="absolute top-24 left-1/2 transform -translate-x-1/2 z-50 pointer-events-none">

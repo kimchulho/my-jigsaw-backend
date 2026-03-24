@@ -299,6 +299,31 @@ async function startServer() {
       socket.emit('score_state', { boardScore, connectionScore });
     });
 
+    const broadcastAllScores = async (roomId: string) => {
+      let scores: any[] = [];
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('puzzle_scores')
+          .select('username, board_score, connection_score')
+          .eq('room_id', roomId);
+        if (!error && data) {
+          scores = data;
+        }
+      } else {
+        for (const [key, val] of memoryScores.entries()) {
+          if (key.startsWith(`${roomId}_`)) {
+            const username = key.replace(`${roomId}_`, '');
+            scores.push({ username, board_score: val.board_score, connection_score: val.connection_score });
+          }
+        }
+      }
+      io.to(`room_${roomId}`).emit('all_scores', scores);
+    };
+
+    socket.on('get_all_scores', async (roomId: string) => {
+      await broadcastAllScores(roomId);
+    });
+
     socket.on('update_score', async ({ roomId, username, boardScore, connectionScore }: { roomId: string, username: string, boardScore: number, connectionScore: number }) => {
       if (supabase) {
         const { error } = await supabase
@@ -315,6 +340,7 @@ async function startServer() {
         }
       }
       memoryScores.set(`${roomId}_${username}`, { board_score: boardScore, connection_score: connectionScore });
+      await broadcastAllScores(roomId);
     });
 
     socket.on('broadcast', (payload: any) => {

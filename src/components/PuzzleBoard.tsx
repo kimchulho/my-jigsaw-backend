@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -42,14 +42,11 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const PIECE_HEIGHT = 100;
   const BOARD_WIDTH = GRID_COLS * PIECE_WIDTH;
   const BOARD_HEIGHT = GRID_ROWS * PIECE_HEIGHT;
-  const parsedRoomId = parseInt(roomConfig.roomId, 10);
-  const ROOM_OFFSET = isNaN(parsedRoomId) ? 0 : parsedRoomId * 10000;
 
   const [image] = useImage(IMAGE_URL, 'anonymous');
 
   const getColRow = useCallback((id: number) => {
-    const i = id % 10000;
-    return { col: i % GRID_COLS, row: Math.floor(i / GRID_COLS) };
+    return { col: id % GRID_COLS, row: Math.floor(id / GRID_COLS) };
   }, [GRID_COLS]);
 
   const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
@@ -57,6 +54,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [isReady, setIsReady] = useState(false);
   const [imagesReady, setImagesReady] = useState(false);
   const [pieceImages, setPieceImages] = useState<Record<string, HTMLCanvasElement>>({});
+  const [isStageDragging, setIsStageDragging] = useState(false);
   
   const stageScale = useRef(1);
   const stagePos = useRef({ x: 0, y: 0 });
@@ -204,10 +202,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     const handlePiecesState = (data: any[]) => {
       if (data && data.length > 0) {
-        const roomPieces = data.filter(p => p.piece_id >= ROOM_OFFSET && p.piece_id < ROOM_OFFSET + 10000);
-        
-        if (roomPieces.length === GRID_COLS * GRID_ROWS) {
-          const processedData = roomPieces.map(p => {
+        if (data.length === GRID_COLS * GRID_ROWS) {
+          const processedData = data.map(p => {
             const { col, row } = getColRow(p.piece_id);
             const targetX = col * PIECE_WIDTH;
             const targetY = row * PIECE_HEIGHT;
@@ -216,8 +212,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           });
           setPieces(processedData);
         } else {
-          if (roomPieces.length > 0) {
-            const extraIds = roomPieces.map(p => p.piece_id);
+          if (data.length > 0) {
+            const extraIds = data.map(p => p.piece_id);
             socket.emit('delete_pieces', { roomId: roomConfig.roomId, pieceIds: extraIds });
           }
           initializeNewPieces();
@@ -238,7 +234,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         const angle = Math.random() * Math.PI * 2;
 
         initialPieces.push({
-          piece_id: ROOM_OFFSET + i,
+          piece_id: i,
           current_x: centerX + Math.cos(angle) * radius - (PIECE_WIDTH / 2),
           current_y: centerY + Math.sin(angle) * radius - (PIECE_HEIGHT / 2),
           locked_by: null,
@@ -255,7 +251,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     return () => {
       socket.off('pieces_state', handlePiecesState);
     };
-  }, [roomConfig.roomId, GRID_COLS, GRID_ROWS, ROOM_OFFSET, BOARD_WIDTH, BOARD_HEIGHT, getColRow]);
+  }, [roomConfig.roomId, GRID_COLS, GRID_ROWS, BOARD_WIDTH, BOARD_HEIGHT, getColRow]);
 
   // Realtime subscription
   useEffect(() => {
@@ -642,6 +638,38 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     stagePos.current = newPos;
   };
 
+  const handleManualZoom = (direction: 1 | -1) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const oldScale = stage.scaleX();
+    const zoomFactor = 1.3;
+    const newScale = direction === 1 
+      ? Math.min(oldScale * zoomFactor, 5) 
+      : Math.max(oldScale / zoomFactor, 0.1);
+
+    const centerX = dimensions.width / 2;
+    const centerY = dimensions.height / 2;
+
+    const mousePointTo = {
+      x: (centerX - stage.x()) / oldScale,
+      y: (centerY - stage.y()) / oldScale,
+    };
+
+    const newPos = {
+      x: centerX - mousePointTo.x * newScale,
+      y: centerY - mousePointTo.y * newScale,
+    };
+
+    stage.scaleX(newScale);
+    stage.scaleY(newScale);
+    stage.position(newPos);
+    stage.batchDraw();
+
+    stageScale.current = newScale;
+    stagePos.current = newPos;
+  };
+
   const completedCount = pieces.filter(p => p.is_snapped).length;
   const isCompleted = completedCount === GRID_COLS * GRID_ROWS && completedCount > 0;
 
@@ -691,6 +719,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const isLockedByOther = piece.locked_by && piece.locked_by !== userId;
     const isDragging = piece.locked_by === userId;
     const pieceImage = pieceImages[`${col}-${row}`];
+    const showShadow = !piece.is_snapped && !isStageDragging;
 
     return (
       <Group
@@ -699,6 +728,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         x={piece.current_x}
         y={piece.current_y}
         draggable={!piece.is_snapped && !isLockedByOther}
+        listening={!piece.is_snapped}
         onDragStart={(e) => {
           handleDragStart(e, piece);
         }}
@@ -712,9 +742,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             x={-tabSize}
             y={-tabSize}
             shadowColor={isDragging ? "#3b82f6" : "black"}
-            shadowBlur={piece.is_snapped ? 0 : (isDragging ? 20 : 10)}
-            shadowOffset={{ x: 0, y: piece.is_snapped ? 0 : (isDragging ? 10 : 5) }}
-            shadowOpacity={piece.is_snapped ? 0 : (isDragging ? 0.8 : 0.2)}
+            shadowBlur={showShadow ? (isDragging ? 20 : 10) : 0}
+            shadowOffset={{ x: 0, y: showShadow ? (isDragging ? 10 : 5) : 0 }}
+            shadowOpacity={showShadow ? (isDragging ? 0.8 : 0.2) : 0}
+            perfectDrawEnabled={false}
           />
         )}
       </Group>
@@ -805,6 +836,22 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         onWheel={handleWheel}
         draggable
         ref={stageRef}
+        onDragStart={(e) => {
+          if (e.target === e.currentTarget) {
+            setIsStageDragging(true);
+          }
+        }}
+        onDragMove={(e) => {
+          if (e.target === e.currentTarget) {
+            stagePos.current = { x: e.target.x(), y: e.target.y() };
+          }
+        }}
+        onDragEnd={(e) => {
+          if (e.target === e.currentTarget) {
+            stagePos.current = { x: e.target.x(), y: e.target.y() };
+            setIsStageDragging(false);
+          }
+        }}
       >
         <Layer id="background-layer">
           {/* Board Outline */}
@@ -839,6 +886,24 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
         <Layer id="drag-layer" />
       </Stage>
+
+      {/* Manual Zoom Controls */}
+      <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
+        <button
+          onClick={() => handleManualZoom(1)}
+          className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors"
+          aria-label="Zoom In"
+        >
+          <ZoomIn size={24} />
+        </button>
+        <button
+          onClick={() => handleManualZoom(-1)}
+          className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors"
+          aria-label="Zoom Out"
+        >
+          <ZoomOut size={24} />
+        </button>
+      </div>
     </div>
   );
 }

@@ -46,12 +46,14 @@ function generateEdgePath(x1: number, y1: number, x2: number, y2: number, tabTyp
     return `${px},${py}`;
   };
 
-  const c1 = `C ${p(0.2, 0)} ${p(0.35, 0)} ${p(0.35, 0.05)}`;
-  const c2 = `C ${p(0.35, 0.15)} ${p(0.25, 0.2)} ${p(0.5, 0.2)}`;
-  const c3 = `C ${p(0.75, 0.2)} ${p(0.65, 0.15)} ${p(0.65, 0.05)}`;
-  const c4 = `C ${p(0.65, 0)} ${p(0.8, 0)} ${p(1, 0)}`;
+  const c1 = `C ${p(0.193, 0)} ${p(0.390, -0.127)} ${p(0.393, -0.045)}`;
+  const c2 = `C ${p(0.396, 0.038)} ${p(0.329, 0.066)} ${p(0.329, 0.118)}`;
+  const c3 = `C ${p(0.329, 0.171)} ${p(0.373, 0.195)} ${p(0.500, 0.195)}`;
+  const c4 = `C ${p(0.627, 0.195)} ${p(0.671, 0.171)} ${p(0.671, 0.118)}`;
+  const c5 = `C ${p(0.671, 0.066)} ${p(0.604, 0.038)} ${p(0.607, -0.045)}`;
+  const c6 = `C ${p(0.610, -0.127)} ${p(0.807, 0)} ${p(1.000, 0)}`;
 
-  return `${c1} ${c2} ${c3} ${c4}`;
+  return `${c1} ${c2} ${c3} ${c4} ${c5} ${c6}`;
 }
 
 export function getPiecePath(col: number, row: number, gridCols: number, gridRows: number, pieceWidth: number, pieceHeight: number) {

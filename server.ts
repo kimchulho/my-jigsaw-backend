@@ -294,19 +294,25 @@ async function startServer() {
       let useMemory = !supabase;
 
       if (supabase) {
-        const upsertData = pieces.map(p => ({
-          room_id: roomId,
-          piece_id: p.piece_id,
-          current_x: p.current_x,
-          current_y: p.current_y,
-          is_snapped: p.is_snapped,
-          locked_by: p.locked_by
-        }));
+        // 200개씩 배치 처리하여 데이터베이스 요청 크기 제한 문제 해결
+        const BATCH_SIZE = 200;
+        for (let i = 0; i < pieces.length; i += BATCH_SIZE) {
+          const batch = pieces.slice(i, i + BATCH_SIZE);
+          const upsertData = batch.map(p => ({
+            room_id: roomId,
+            piece_id: p.piece_id,
+            current_x: p.current_x,
+            current_y: p.current_y,
+            is_snapped: p.is_snapped,
+            locked_by: p.locked_by
+          }));
 
-        const { error } = await supabase.from('puzzle_pieces').upsert(upsertData, { onConflict: 'room_id,piece_id' });
-        if (error) {
-          console.error('Error upserting pieces in Supabase:', error.message);
-          useMemory = true;
+          const { error } = await supabase.from('puzzle_pieces').upsert(upsertData, { onConflict: 'room_id,piece_id' });
+          if (error) {
+            console.error(`Error upserting pieces batch ${i} in Supabase:`, error.message);
+            useMemory = true;
+            break; // 하나라도 실패하면 전체 실패로 간주하고 메모리 폴백
+          }
         }
       }
 

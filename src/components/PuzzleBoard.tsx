@@ -55,6 +55,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
   const [userId] = useState(() => uuidv4());
   const [isReady, setIsReady] = useState(false);
+  const [imagesReady, setImagesReady] = useState(false);
+  const [pieceImages, setPieceImages] = useState<Record<string, HTMLCanvasElement>>({});
   
   const stageScale = useRef(1);
   const stagePos = useRef({ x: 0, y: 0 });
@@ -106,6 +108,51 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   useEffect(() => {
     piecesRef.current = pieces;
   }, [pieces]);
+
+  // Pre-crop images for performance
+  useEffect(() => {
+    if (!image) return;
+
+    const generateImages = () => {
+      const images: Record<string, HTMLCanvasElement> = {};
+      const tabSize = Math.min(PIECE_WIDTH, PIECE_HEIGHT) * TAB_SIZE_RATIO;
+      const padding = tabSize;
+
+      for (let row = 0; row < GRID_ROWS; row++) {
+        for (let col = 0; col < GRID_COLS; col++) {
+          const canvas = document.createElement('canvas');
+          canvas.width = PIECE_WIDTH + padding * 2;
+          canvas.height = PIECE_HEIGHT + padding * 2;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) continue;
+
+          const pathString = getPiecePath(col, row, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT);
+          const path = new Path2D(pathString);
+
+          ctx.translate(padding, padding);
+          ctx.clip(path);
+          ctx.drawImage(
+            image,
+            -col * PIECE_WIDTH + padding,
+            -row * PIECE_HEIGHT + padding,
+            BOARD_WIDTH,
+            BOARD_HEIGHT
+          );
+
+          // Bake a subtle inner stroke into the PNG for piece visibility
+          ctx.lineWidth = 2; // 2px centered on path = 1px inner stroke due to clip
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
+          ctx.stroke(path);
+
+          images[`${col}-${row}`] = canvas;
+        }
+      }
+      setPieceImages(images);
+      setImagesReady(true);
+    };
+
+    generateImages();
+  }, [image, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT, BOARD_WIDTH, BOARD_HEIGHT, getPiecePath]);
 
   // Center the camera on mount
   useEffect(() => {
@@ -574,13 +621,52 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
   }, [isCompleted]);
 
-  if (!isReady) {
+  if (!isReady || !imagesReady) {
     return (
       <div className="flex items-center justify-center h-screen bg-slate-900 text-white">
         <Loader2 className="w-8 h-8 animate-spin" />
       </div>
     );
   }
+
+  const renderPiece = (piece: PuzzlePiece) => {
+    const { col, row } = getColRow(piece.piece_id);
+    const tabSize = Math.min(PIECE_WIDTH, PIECE_HEIGHT) * TAB_SIZE_RATIO;
+    const pathData = getPiecePath(col, row, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT);
+
+    const isLockedByOther = piece.locked_by && piece.locked_by !== userId;
+    const isDragging = piece.locked_by === userId;
+    const pieceImage = pieceImages[`${col}-${row}`];
+
+    return (
+      <Group
+        key={piece.piece_id}
+        id={`piece-${piece.piece_id}`}
+        x={piece.current_x}
+        y={piece.current_y}
+        draggable={!piece.is_snapped && !isLockedByOther}
+        onDragStart={(e) => {
+          e.target.moveToTop();
+          handleDragStart(e, piece);
+        }}
+        onDragMove={handleDragMove}
+        onDragEnd={handleDragEnd}
+        opacity={isLockedByOther ? 0.5 : 1}
+      >
+        {pieceImage && (
+          <KonvaImage
+            image={pieceImage}
+            x={-tabSize * 2}
+            y={-tabSize * 2}
+            shadowColor={isDragging ? "#3b82f6" : "black"}
+            shadowBlur={piece.is_snapped ? 0 : (isDragging ? 20 : 10)}
+            shadowOffset={{ x: 0, y: piece.is_snapped ? 0 : (isDragging ? 10 : 5) }}
+            shadowOpacity={piece.is_snapped ? 0 : (isDragging ? 0.8 : 0.2)}
+          />
+        )}
+      </Group>
+    );
+  };
 
   return (
     <div 
@@ -667,7 +753,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         draggable
         ref={stageRef}
       >
-        <Layer>
+        <Layer id="background-layer">
           {/* Board Outline */}
           <Rect
             x={0}
@@ -688,87 +774,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               opacity={0.1}
             />
           )}
+        </Layer>
 
-          {/* Pieces */}
-          {pieces.map((piece) => {
-            const { col, row } = getColRow(piece.piece_id);
-            const tabSize = Math.min(PIECE_WIDTH, PIECE_HEIGHT) * TAB_SIZE_RATIO;
-            const pathData = getPiecePath(col, row, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT);
+        <Layer id="snapped-layer">
+          {pieces.filter(p => p.is_snapped).map(renderPiece)}
+        </Layer>
 
-            const isLockedByOther = piece.locked_by && piece.locked_by !== userId;
-            const isDragging = piece.locked_by === userId;
-
-            return (
-              <Group
-                key={piece.piece_id}
-                id={`piece-${piece.piece_id}`}
-                x={piece.current_x}
-                y={piece.current_y}
-                draggable={!piece.is_snapped && !isLockedByOther}
-                onDragStart={(e) => handleDragStart(e, piece)}
-                onDragMove={handleDragMove}
-                onDragEnd={handleDragEnd}
-              >
-                {/* Shadow */}
-                {!piece.is_snapped && (
-                  <Path
-                    data={pathData}
-                    x={-tabSize}
-                    y={-tabSize}
-                    fill="black"
-                    opacity={isDragging ? 0.4 : 0.2}
-                    shadowColor="black"
-                    shadowBlur={isDragging ? 20 : 10}
-                    shadowOffset={{ x: 0, y: isDragging ? 10 : 5 }}
-                    shadowOpacity={0.5}
-                  />
-                )}
-                
-                {/* Image clipped to path */}
-                <Group
-                  x={-tabSize}
-                  y={-tabSize}
-                  opacity={isLockedByOther ? 0.5 : 1}
-                  ref={(node) => {
-                    if (node && image && !node.isCached()) {
-                      // Cache the piece for performance and to isolate source-in blending
-                      node.cache({
-                        x: 0,
-                        y: 0,
-                        width: PIECE_WIDTH + tabSize * 2,
-                        height: PIECE_HEIGHT + tabSize * 2,
-                        pixelRatio: 2 // High quality
-                      });
-                    }
-                  }}
-                >
-                  <Path
-                    data={pathData}
-                    fill="white"
-                  />
-                  {image && (
-                    <KonvaImage
-                      image={image}
-                      x={-col * PIECE_WIDTH + tabSize}
-                      y={-row * PIECE_HEIGHT + tabSize}
-                      width={BOARD_WIDTH}
-                      height={BOARD_HEIGHT}
-                      globalCompositeOperation="source-in"
-                    />
-                  )}
-                </Group>
-
-                {/* Stroke */}
-                <Path
-                  data={pathData}
-                  x={-tabSize}
-                  y={-tabSize}
-                  stroke={isDragging ? "#3b82f6" : "#1e293b"}
-                  strokeWidth={isDragging ? 3 : 1}
-                />
-              </Group>
-            );
-          })}
+        <Layer id="active-layer">
+          {pieces.filter(p => !p.is_snapped).map(renderPiece)}
         </Layer>
       </Stage>
     </div>

@@ -45,6 +45,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
 
     if (socket.connected) {
       setIsConnecting(false);
+      socket.emit('get_rooms');
     }
 
     return () => {

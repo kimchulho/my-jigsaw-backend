@@ -289,6 +289,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   }, [userId, roomConfig.roomId, GRID_COLS, GRID_ROWS, getColRow]);
 
   const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>, piece: PuzzlePiece) => {
+    const evt = e.evt as any;
+    if (evt && evt.touches && evt.touches.length > 1) {
+      e.target.stopDrag();
+      return;
+    }
+
     if (piece.is_snapped || (piece.locked_by && piece.locked_by !== userId)) {
       e.target.stopDrag();
       return;
@@ -497,13 +503,20 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     };
 
     const zoomSensitivity = 0.002;
-    const newScale = Math.min(Math.max(0.2, oldScale - e.evt.deltaY * zoomSensitivity), 4);
+    const newScale = Math.min(Math.max(0.1, oldScale - e.evt.deltaY * zoomSensitivity), 5);
 
-    setStageScale(newScale);
-    setStagePos({
+    const newPos = {
       x: pointer.x - mousePointTo.x * newScale,
       y: pointer.y - mousePointTo.y * newScale,
-    });
+    };
+
+    stage.scaleX(newScale);
+    stage.scaleY(newScale);
+    stage.position(newPos);
+    stage.batchDraw();
+
+    setStageScale(newScale);
+    setStagePos(newPos);
   };
 
   const handleTouchMove = (e: Konva.KonvaEventObject<TouchEvent>) => {
@@ -523,43 +536,50 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       const p2 = { x: touch2.clientX, y: touch2.clientY };
 
       const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-
-      if (!lastDist.current) {
-        lastDist.current = dist;
-      }
-
       const center = {
         x: (p1.x + p2.x) / 2,
         y: (p1.y + p2.y) / 2,
       };
 
-      if (!lastCenter.current) {
+      if (!lastDist.current || !lastCenter.current) {
+        lastDist.current = dist;
         lastCenter.current = center;
         return;
       }
 
-      const scale = stage.scaleX() * (dist / lastDist.current);
-      const newScale = Math.min(Math.max(0.2, scale), 4);
+      const currentScale = stage.scaleX();
+      const scaleChange = dist / lastDist.current;
+      const newScale = Math.min(Math.max(0.1, currentScale * scaleChange), 5);
 
       const dx = center.x - lastCenter.current.x;
       const dy = center.y - lastCenter.current.y;
 
       const newPos = {
-        x: center.x - (center.x - stage.x()) * (newScale / stage.scaleX()) + dx,
-        y: center.y - (center.y - stage.y()) * (newScale / stage.scaleX()) + dy,
+        x: center.x - (center.x - stage.x()) * (newScale / currentScale) + dx,
+        y: center.y - (center.y - stage.y()) * (newScale / currentScale) + dy,
       };
 
-      setStageScale(newScale);
-      setStagePos(newPos);
+      stage.scaleX(newScale);
+      stage.scaleY(newScale);
+      stage.position(newPos);
+      stage.batchDraw();
 
       lastDist.current = dist;
       lastCenter.current = center;
+
+      setStageScale(newScale);
+      setStagePos(newPos);
+    } else {
+      lastDist.current = 0;
+      lastCenter.current = null;
     }
   };
 
-  const handleTouchEnd = () => {
-    lastDist.current = 0;
-    lastCenter.current = null;
+  const handleTouchEnd = (e: Konva.KonvaEventObject<TouchEvent>) => {
+    if (!e.evt.touches || e.evt.touches.length < 2) {
+      lastDist.current = 0;
+      lastCenter.current = null;
+    }
   };
 
   const completedCount = pieces.filter(p => p.is_snapped).length;

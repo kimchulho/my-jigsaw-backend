@@ -56,8 +56,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [userId] = useState(() => uuidv4());
   const [isReady, setIsReady] = useState(false);
   
-  const [stageScale, setStageScale] = useState(1);
-  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+  const stageScale = useRef(1);
+  const stagePos = useRef({ x: 0, y: 0 });
   
   const [playerCount, setPlayerCount] = useState(1);
   const [boardScore, setBoardScore] = useState(0);
@@ -112,11 +112,37 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
   // Center the camera on mount
   useEffect(() => {
-    setStagePos({
+    stagePos.current = {
       x: window.innerWidth / 2 - BOARD_WIDTH / 2,
       y: window.innerHeight / 2 - BOARD_HEIGHT / 2,
-    });
+    };
+    if (stageRef.current) {
+      stageRef.current.position(stagePos.current);
+      stageRef.current.batchDraw();
+    }
   }, [BOARD_WIDTH, BOARD_HEIGHT]);
+
+  // Prevent native browser touch actions (scrolling, zooming) on the canvas
+  useEffect(() => {
+    if (!isReady || !stageRef.current) return;
+    
+    const container = stageRef.current.container();
+    container.style.touchAction = 'none';
+    
+    const preventDefault = (e: Event) => {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    };
+    
+    container.addEventListener('touchmove', preventDefault, { passive: false });
+    container.addEventListener('wheel', preventDefault, { passive: false });
+    
+    return () => {
+      container.removeEventListener('touchmove', preventDefault);
+      container.removeEventListener('wheel', preventDefault);
+    };
+  }, [isReady]);
 
   // Handle window resize
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -515,8 +541,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     stage.position(newPos);
     stage.batchDraw();
 
-    setStageScale(newScale);
-    setStagePos(newPos);
+    stageScale.current = newScale;
+    stagePos.current = newPos;
   };
 
   const handleTouchMove = (e: Konva.KonvaEventObject<TouchEvent>) => {
@@ -567,8 +593,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       lastDist.current = dist;
       lastCenter.current = center;
 
-      setStageScale(newScale);
-      setStagePos(newPos);
+      stageScale.current = newScale;
+      stagePos.current = newPos;
     } else {
       lastDist.current = 0;
       lastCenter.current = null;
@@ -700,10 +726,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       <Stage
         width={dimensions.width}
         height={dimensions.height}
-        scaleX={stageScale}
-        scaleY={stageScale}
-        x={stagePos.x}
-        y={stagePos.y}
+        scaleX={stageScale.current}
+        scaleY={stageScale.current}
+        x={stagePos.current.x}
+        y={stagePos.current.y}
         onWheel={handleWheel}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}

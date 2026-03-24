@@ -165,6 +165,12 @@ async function startServer() {
     });
 
     socket.on('create_room', async (roomData: any, callback?: (res: any) => void) => {
+      // 조각 수 제한 (최대 1000개)
+      if (roomData.cols * roomData.rows > 1000) {
+        if (callback) callback({ success: false, message: 'Too many pieces. Max 1000 allowed.' });
+        return;
+      }
+
       let useMemory = !supabase;
       if (supabase) {
         const { error } = await supabase.from('puzzle_rooms').insert({

@@ -159,8 +159,15 @@ export default function Home({ existingRoom, existingPassword, onEnter }: HomePr
       
       const roomIdNum = Math.floor(Math.random() * 90000 + 10000);
       const roomId = roomIdNum.toString();
-      const finalCols = Math.max(2, cols);
-      const finalRows = Math.max(2, rows);
+      
+      // 조각 수 제한 (최대 1000개)
+      let finalCols = Math.max(2, cols);
+      let finalRows = Math.max(2, rows);
+      if (finalCols * finalRows > 1000) {
+        const ratio = Math.sqrt(1000 / (finalCols * finalRows));
+        finalCols = Math.max(2, Math.round(finalCols * ratio));
+        finalRows = Math.max(2, Math.round(finalRows * ratio));
+      }
       
       const roomData = {
         id: roomId,

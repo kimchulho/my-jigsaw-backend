@@ -296,6 +296,19 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               draggingGroupRef.current = [];
             }
           }
+          const stage = stageRef.current;
+          if (stage) {
+            const dragLayer = stage.findOne('#drag-layer');
+            const idleLayer = stage.findOne('#idle-layer');
+            if (dragLayer && idleLayer) {
+              piece_ids.forEach((id: number) => {
+                const node = stage.findOne(`#piece-${id}`);
+                if (node) node.moveTo(dragLayer);
+              });
+              dragLayer.batchDraw();
+              idleLayer.batchDraw();
+            }
+          }
           setPieces((prev) => {
             const unselected = prev.filter(p => !piece_ids.includes(p.piece_id));
             const selected = prev.filter(p => piece_ids.includes(p.piece_id)).map(p => ({ ...p, locked_by }));
@@ -304,6 +317,19 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         }
       } else if (payload.event === 'piece-drop') {
         const { pieces: droppedPieces } = payload.payload;
+        const stage = stageRef.current;
+        if (stage) {
+          const idleLayer = stage.findOne('#idle-layer');
+          const dragLayer = stage.findOne('#drag-layer');
+          if (idleLayer && dragLayer) {
+            droppedPieces.forEach((dp: any) => {
+              const node = stage.findOne(`#piece-${dp.piece_id}`);
+              if (node) node.moveTo(idleLayer);
+            });
+            dragLayer.batchDraw();
+            idleLayer.batchDraw();
+          }
+        }
         setPieces((prev) => {
           const newPieces = [...prev];
           for (const dp of droppedPieces) {
@@ -371,6 +397,24 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const groupIds = getConnectedGroup(piece.piece_id, piecesRef.current);
     draggingGroupRef.current = groupIds;
 
+    const stage = e.target.getStage();
+    if (stage) {
+      const dragLayer = stage.findOne('#drag-layer');
+      const idleLayer = stage.findOne('#idle-layer');
+      
+      if (dragLayer && idleLayer) {
+        groupIds.forEach(id => {
+          const node = stage.findOne(`#piece-${id}`);
+          if (node) {
+            node.moveTo(dragLayer);
+            node.moveToTop();
+          }
+        });
+        dragLayer.batchDraw();
+        idleLayer.batchDraw();
+      }
+    }
+
     setPieces((prev) => {
       const unselected = prev.filter(p => !groupIds.includes(p.piece_id));
       const selected = prev.filter(p => groupIds.includes(p.piece_id)).map(p => ({ ...p, locked_by: userId }));
@@ -434,6 +478,21 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     const groupIds = draggingGroupRef.current;
     if (groupIds.length === 0) return;
+
+    const stage = e.target.getStage();
+    if (stage) {
+      const idleLayer = stage.findOne('#idle-layer');
+      const dragLayer = stage.findOne('#drag-layer');
+      
+      if (idleLayer && dragLayer) {
+        groupIds.forEach(id => {
+          const node = stage.findOne(`#piece-${id}`);
+          if (node) node.moveTo(idleLayer);
+        });
+        dragLayer.batchDraw();
+        idleLayer.batchDraw();
+      }
+    }
 
     draggingGroupRef.current = [];
 
@@ -645,7 +704,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         y={piece.current_y}
         draggable={!piece.is_snapped && !isLockedByOther}
         onDragStart={(e) => {
-          e.target.moveToTop();
           handleDragStart(e, piece);
         }}
         onDragMove={handleDragMove}
@@ -779,9 +837,11 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           {pieces.filter(p => p.is_snapped).map(renderPiece)}
         </Layer>
 
-        <Layer id="active-layer">
+        <Layer id="idle-layer">
           {pieces.filter(p => !p.is_snapped).map(renderPiece)}
         </Layer>
+
+        <Layer id="drag-layer" />
       </Stage>
     </div>
   );

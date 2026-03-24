@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check, WifiOff } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -149,6 +149,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
   const [playTime, setPlayTime] = useState(0);
+  const [isDisconnected, setIsDisconnected] = useState(false);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -156,6 +157,19 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const draggingGroupRef = useRef<number[]>([]);
   const lastBroadcastRef = useRef<number>(0);
   const piecesRef = useRef<PuzzlePiece[]>([]);
+
+  useEffect(() => {
+    const handleDisconnect = () => setIsDisconnected(true);
+    const handleConnect = () => setIsDisconnected(false);
+
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect', handleConnect);
+
+    return () => {
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect', handleConnect);
+    };
+  }, []);
 
   const getConnectedGroup = (startId: number, allPieces: PuzzlePiece[]) => {
     const group = new Set<number>([startId]);
@@ -1311,6 +1325,27 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
                 Reconnect
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disconnected Modal */}
+      {isDisconnected && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-8 pointer-events-auto">
+          <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl max-w-md w-full text-center flex flex-col items-center animate-in zoom-in-95 duration-300">
+            <div className="w-16 h-16 bg-red-900/50 rounded-full flex items-center justify-center mb-4">
+              <WifiOff className="w-8 h-8 text-red-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">Connection Lost</h2>
+            <p className="text-slate-300 mb-8">
+              The connection to the server has been lost. Please return to the lobby to reconnect.
+            </p>
+            <button
+              onClick={onBack}
+              className="w-full bg-red-600 hover:bg-red-500 text-white py-3 rounded-xl font-medium transition-colors"
+            >
+              Return to Lobby
+            </button>
           </div>
         </div>
       )}

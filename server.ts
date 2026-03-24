@@ -115,31 +115,42 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
+  // Populate roomPlayTimes from Supabase on startup
+  if (supabase) {
+    await getRoomsFromDB();
+  }
+
   // Socket.io logic
-  setInterval(async () => {
-    const updates: { roomId: string, playTime: number }[] = [];
-    for (const [roomIdStr, room] of io.sockets.adapter.rooms.entries()) {
-      if (roomIdStr.startsWith('room_') && room.size > 0) {
-        const roomId = roomIdStr.replace('room_', '');
-        if (!roomCompleted.has(roomId)) {
-          const currentPlayTime = (roomPlayTimes.get(roomId) || 0) + 1;
-          roomPlayTimes.set(roomId, currentPlayTime);
-          updates.push({ roomId, playTime: currentPlayTime });
+  const runTimer = async () => {
+    try {
+      const updates: { roomId: string, playTime: number }[] = [];
+      for (const [roomIdStr, room] of io.sockets.adapter.rooms.entries()) {
+        if (roomIdStr.startsWith('room_') && room.size > 0) {
+          const roomId = roomIdStr.replace('room_', '');
+          if (!roomCompleted.has(roomId)) {
+            const currentPlayTime = (roomPlayTimes.get(roomId) || 0) + 1;
+            roomPlayTimes.set(roomId, currentPlayTime);
+            updates.push({ roomId, playTime: currentPlayTime });
+          }
         }
       }
-    }
 
-    for (const update of updates) {
-      io.to(`room_${update.roomId}`).emit('play_time_update', update.playTime);
-      
-      // Save to DB every 10 seconds
-      if (update.playTime % 10 === 0 && supabase) {
-        supabase.from('puzzle_rooms').update({ play_time: update.playTime }).eq('id', update.roomId).then(({error}) => {
-          if (error) console.error('Error saving play time:', error.message);
-        });
+      for (const update of updates) {
+        io.to(`room_${update.roomId}`).emit('play_time_update', update.playTime);
+        
+        // Save to DB every 10 seconds
+        if (update.playTime % 10 === 0 && supabase) {
+          supabase.from('puzzle_rooms').update({ play_time: update.playTime }).eq('id', update.roomId).then(({error}) => {
+            if (error) console.error('Error saving play time:', error.message);
+          });
+        }
       }
+    } catch (error) {
+      console.error('Error in runTimer:', error);
     }
-  }, 1000);
+    setTimeout(runTimer, 1000);
+  };
+  setTimeout(runTimer, 1000);
 
   io.on('connection', async (socket) => {
     console.log('User connected:', socket.id);
@@ -351,11 +362,22 @@ async function startServer() {
     });
 
     socket.on('puzzle_completed', async (roomId: string) => {
+      console.log('Puzzle completed for room:', roomId);
       if (!roomCompleted.has(roomId)) {
         roomCompleted.add(roomId);
         if (supabase) {
-          const playTime = roomPlayTimes.get(roomId) || 0;
-          await supabase.from('puzzle_rooms').update({ is_completed: true, play_time: playTime }).eq('id', roomId);
+          try {
+            const playTime = roomPlayTimes.get(roomId) || 0;
+            console.log('Saving completed play time to DB:', playTime);
+            const { error } = await supabase.from('puzzle_rooms').update({ is_completed: true, play_time: playTime }).eq('id', roomId);
+            if (error) {
+              console.error('Error saving completed play time to Supabase:', error.message);
+            } else {
+              console.log('Successfully saved completed play time to DB');
+            }
+          } catch (e) {
+            console.error('Exception saving completed play time to Supabase:', e);
+          }
         }
         io.to(`room_${roomId}`).emit('puzzle_completed_broadcast');
         const rooms = await getRoomsFromDB(io);

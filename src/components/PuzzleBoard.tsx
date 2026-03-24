@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -49,12 +49,88 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     return { col: id % GRID_COLS, row: Math.floor(id / GRID_COLS) };
   }, [GRID_COLS]);
 
+  const getScatterPositions = useCallback((totalPieces: number) => {
+    // Cell size large enough to prevent any overlapping between pieces
+    const cw = PIECE_WIDTH * 1.6;
+    const ch = PIECE_HEIGHT * 1.6;
+    
+    // Define the forbidden area (the board + padding for piece tabs)
+    // A piece's top-left is at (x,y). It extends roughly -0.2*W to +1.2*W.
+    // To be completely outside the board (0 to BOARD_WIDTH):
+    // Left of board: x + 1.2*W < 0 => x < -1.2*W
+    // Right of board: x - 0.2*W > BOARD_WIDTH => x > BOARD_WIDTH + 0.2*W
+    const board_min_x = -PIECE_WIDTH * 1.3;
+    const board_max_x = BOARD_WIDTH + PIECE_WIDTH * 0.3;
+    const board_min_y = -PIECE_HEIGHT * 1.3;
+    const board_max_y = BOARD_HEIGHT + PIECE_HEIGHT * 0.3;
+    
+    const centerX = BOARD_WIDTH / 2;
+    const centerY = BOARD_HEIGHT / 2;
+    
+    const positions: {x: number, y: number}[] = [];
+    const searchRadius = Math.ceil(Math.sqrt(totalPieces)) + 10;
+    
+    const start_c = -searchRadius;
+    const end_c = Math.ceil(BOARD_WIDTH / cw) + searchRadius;
+    const start_r = -searchRadius;
+    const end_r = Math.ceil(BOARD_HEIGHT / ch) + searchRadius;
+    
+    for (let c = start_c; c <= end_c; c++) {
+      for (let r = start_r; r <= end_r; r++) {
+        const px = c * cw;
+        const py = r * ch;
+        
+        const isInsideBoard = px >= board_min_x && px <= board_max_x && py >= board_min_y && py <= board_max_y;
+        
+        if (!isInsideBoard) {
+          positions.push({ x: px, y: py });
+        }
+      }
+    }
+    
+    // Sort by distance to the center of the board so pieces cluster around it
+    positions.sort((a, b) => {
+      const distA = Math.pow(a.x - centerX, 2) + Math.pow(a.y - centerY, 2);
+      const distB = Math.pow(b.x - centerX, 2) + Math.pow(b.y - centerY, 2);
+      return distA - distB;
+    });
+    
+    // Take exactly the number of pieces we need
+    const selectedPositions = positions.slice(0, totalPieces);
+    
+    // Shuffle the selected positions so the puzzle pieces are randomly distributed
+    for (let i = selectedPositions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [selectedPositions[i], selectedPositions[j]] = [selectedPositions[j], selectedPositions[i]];
+    }
+    
+    // Add a small jitter to make it look slightly organic, but keep it small to avoid overlaps
+    return selectedPositions.map(pos => ({
+      x: pos.x + (Math.random() - 0.5) * (PIECE_WIDTH * 0.1),
+      y: pos.y + (Math.random() - 0.5) * (PIECE_HEIGHT * 0.1)
+    }));
+  }, [BOARD_WIDTH, BOARD_HEIGHT, PIECE_WIDTH, PIECE_HEIGHT]);
+
   const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
   const [userId] = useState(() => uuidv4());
   const [isReady, setIsReady] = useState(false);
   const [imagesReady, setImagesReady] = useState(false);
   const [pieceImages, setPieceImages] = useState<Record<string, HTMLCanvasElement>>({});
   const [isStageDragging, setIsStageDragging] = useState(false);
+  const [bgColor, setBgColor] = useState('bg-slate-900');
+  const [showLargePreview, setShowLargePreview] = useState(false);
+  
+  const totalPieces = GRID_COLS * GRID_ROWS;
+  const showBoardBackground = totalPieces <= 150;
+  
+  const bgColors = [
+    'bg-slate-900',
+    'bg-stone-900',
+    'bg-indigo-950',
+    'bg-emerald-950',
+    'bg-slate-100',
+    'bg-amber-50',
+  ];
   
   const stageScale = useRef(1);
   const stagePos = useRef({ x: 0, y: 0 });
@@ -226,17 +302,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     const initializeNewPieces = () => {
       const initialPieces: PuzzlePiece[] = [];
-      const centerX = BOARD_WIDTH / 2;
-      const centerY = BOARD_HEIGHT / 2;
+      const totalPieces = GRID_COLS * GRID_ROWS;
+      const scatterPositions = getScatterPositions(totalPieces);
 
-      for (let i = 0; i < GRID_COLS * GRID_ROWS; i++) {
-        const radius = Math.min(BOARD_WIDTH, BOARD_HEIGHT) / 2 + Math.min(PIECE_WIDTH, PIECE_HEIGHT) / 2 + 50 + Math.random() * 250;
-        const angle = Math.random() * Math.PI * 2;
-
+      for (let i = 0; i < totalPieces; i++) {
         initialPieces.push({
           piece_id: i,
-          current_x: centerX + Math.cos(angle) * radius - (PIECE_WIDTH / 2),
-          current_y: centerY + Math.sin(angle) * radius - (PIECE_HEIGHT / 2),
+          current_x: scatterPositions[i].x,
+          current_y: scatterPositions[i].y,
           locked_by: null,
           is_snapped: false,
         });
@@ -621,7 +694,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       y: (pointer.y - stage.y()) / oldScale,
     };
 
-    const zoomSensitivity = 0.002;
+    const zoomSensitivity = 0.0005; // Finer step for mouse wheel
     const newScale = Math.min(Math.max(0.1, oldScale - e.evt.deltaY * zoomSensitivity), 5);
 
     const newPos = {
@@ -643,7 +716,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     if (!stage) return;
 
     const oldScale = stage.scaleX();
-    const zoomFactor = 1.3;
+    const zoomFactor = 1.15; // Finer step for manual zoom buttons
     const newScale = direction === 1 
       ? Math.min(oldScale * zoomFactor, 5) 
       : Math.max(oldScale / zoomFactor, 0.1);
@@ -705,7 +778,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
   if (!isReady || !imagesReady) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-900 text-white">
+      <div className={`flex items-center justify-center h-screen ${bgColor} text-white transition-colors duration-500`}>
         <Loader2 className="w-8 h-8 animate-spin" />
       </div>
     );
@@ -755,7 +828,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   return (
     <div 
       ref={containerRef}
-      className="relative w-full h-screen bg-slate-900 overflow-hidden touch-none font-sans"
+      className={`relative w-full h-screen ${bgColor} overflow-hidden touch-none font-sans transition-colors duration-500`}
     >
       {/* Header */}
       <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-20 pointer-events-none">
@@ -774,15 +847,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           )}
           <button 
             onClick={async () => {
-              const centerX = BOARD_WIDTH / 2;
-              const centerY = BOARD_HEIGHT / 2;
-              const resetPieces = pieces.map(p => {
-                const radius = Math.min(BOARD_WIDTH, BOARD_HEIGHT) / 2 + Math.min(PIECE_WIDTH, PIECE_HEIGHT) / 2 + 50 + Math.random() * 250;
-                const angle = Math.random() * Math.PI * 2;
+              const totalPieces = GRID_COLS * GRID_ROWS;
+              const scatterPositions = getScatterPositions(totalPieces);
+              const resetPieces = pieces.map((p, i) => {
                 return {
                   ...p,
-                  current_x: centerX + Math.cos(angle) * radius - (PIECE_WIDTH / 2),
-                  current_y: centerY + Math.sin(angle) * radius - (PIECE_HEIGHT / 2),
+                  current_x: scatterPositions[i].x,
+                  current_y: scatterPositions[i].y,
                   locked_by: null,
                   is_snapped: false
                 };
@@ -864,7 +935,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             strokeWidth={2}
             dash={[10, 10]}
           />
-          {image && (
+          {image && showBoardBackground && (
             <KonvaImage
               image={image}
               x={0}
@@ -887,11 +958,23 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         <Layer id="drag-layer" />
       </Stage>
 
-      {/* Manual Zoom Controls */}
+      {/* Manual Zoom & Settings Controls */}
       <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
         <button
-          onClick={() => handleManualZoom(1)}
+          onClick={() => {
+            const currentIndex = bgColors.indexOf(bgColor);
+            const nextIndex = (currentIndex + 1) % bgColors.length;
+            setBgColor(bgColors[nextIndex]);
+          }}
           className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors"
+          aria-label="Change Background Color"
+          title="Change Background Color"
+        >
+          <Palette size={24} />
+        </button>
+        <button
+          onClick={() => handleManualZoom(1)}
+          className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors mt-2"
           aria-label="Zoom In"
         >
           <ZoomIn size={24} />
@@ -904,6 +987,51 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           <ZoomOut size={24} />
         </button>
       </div>
+
+      {/* Minimap for large puzzles */}
+      {!showBoardBackground && image && (
+        <div className="absolute bottom-6 left-6 z-20 flex flex-col gap-2">
+          <div className="bg-slate-800/80 backdrop-blur-md p-2 rounded-xl border border-slate-700 shadow-lg pointer-events-auto">
+            <div 
+              className="relative group cursor-pointer" 
+              onClick={() => setShowLargePreview(true)}
+              title="View Original Image"
+            >
+              <img 
+                src={roomConfig.imageUrl} 
+                alt="Puzzle Preview" 
+                className="w-32 h-auto rounded-lg opacity-80 group-hover:opacity-100 transition-opacity"
+              />
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 rounded-lg">
+                <Maximize2 className="w-6 h-6 text-white" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Large Preview Modal */}
+      {showLargePreview && (
+        <div 
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8 pointer-events-auto" 
+          onClick={() => setShowLargePreview(false)}
+        >
+          <div className="relative max-w-full max-h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
+            <button 
+              onClick={() => setShowLargePreview(false)}
+              className="absolute -top-4 -right-4 bg-slate-800 hover:bg-slate-700 p-2 rounded-full text-white shadow-lg border border-slate-700 transition-colors z-10"
+              aria-label="Close Preview"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img 
+              src={roomConfig.imageUrl} 
+              alt="Puzzle Large Preview" 
+              className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl border border-slate-700"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

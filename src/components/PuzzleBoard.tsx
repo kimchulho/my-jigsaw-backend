@@ -309,11 +309,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               idleLayer.batchDraw();
             }
           }
-          setPieces((prev) => {
-            const unselected = prev.filter(p => !piece_ids.includes(p.piece_id));
-            const selected = prev.filter(p => piece_ids.includes(p.piece_id)).map(p => ({ ...p, locked_by }));
-            return [...unselected, ...selected];
-          });
+          setPieces((prev) => prev.map(p => 
+            piece_ids.includes(p.piece_id) ? { ...p, locked_by } : p
+          ));
         }
       } else if (payload.event === 'piece-drop') {
         const { pieces: droppedPieces } = payload.payload;
@@ -415,11 +413,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       }
     }
 
-    setPieces((prev) => {
-      const unselected = prev.filter(p => !groupIds.includes(p.piece_id));
-      const selected = prev.filter(p => groupIds.includes(p.piece_id)).map(p => ({ ...p, locked_by: userId }));
-      return [...unselected, ...selected];
-    });
+    setPieces((prev) => prev.map(p => 
+      groupIds.includes(p.piece_id) ? { ...p, locked_by: userId } : p
+    ));
 
     socket.emit('broadcast', {
       roomId: roomConfig.roomId,

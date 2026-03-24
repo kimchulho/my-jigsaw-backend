@@ -43,7 +43,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const BOARD_WIDTH = GRID_COLS * PIECE_WIDTH;
   const BOARD_HEIGHT = GRID_ROWS * PIECE_HEIGHT;
 
-  const [image] = useImage(IMAGE_URL, 'anonymous');
+  const [image, status] = useImage(IMAGE_URL, 'anonymous');
 
   const getColRow = useCallback((id: number) => {
     return { col: id % GRID_COLS, row: Math.floor(id / GRID_COLS) };
@@ -939,6 +939,18 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       return () => clearInterval(interval);
     }
   }, [isCompleted]);
+
+  if (status === 'failed') {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-white">
+        <p className="text-xl mb-4 text-red-400">이미지를 불러오는데 실패했습니다.</p>
+        <p className="text-slate-400 mb-8">이미지 서버에서 접근을 차단했거나 삭제된 이미지입니다.</p>
+        <button onClick={onBack} className="px-6 py-2 bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors">
+          돌아가기
+        </button>
+      </div>
+    );
+  }
 
   if (!isReady || !imagesReady) {
     return (

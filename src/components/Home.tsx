@@ -86,6 +86,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
     
     // Load image to get aspect ratio
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = async () => {
       const aspectRatio = img.width / img.height;
       
@@ -122,7 +123,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
       setIsCalculating(false);
     };
     img.onerror = () => {
-      alert('Failed to load image. Please check the URL.');
+      alert('이미지를 불러올 수 없습니다. CORS를 지원하지 않는 이미지이거나 URL이 잘못되었습니다.');
       setIsCalculating(false);
     };
     img.src = imageUrl;

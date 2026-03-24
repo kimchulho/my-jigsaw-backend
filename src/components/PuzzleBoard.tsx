@@ -147,6 +147,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [score, setScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<{username: string, score: number}[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
+  const [playTime, setPlayTime] = useState(0);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -445,6 +446,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       setPieces(initialPieces);
     };
 
+    const handleRoomState = (room: any) => {
+      if (room.playTime !== undefined) {
+        setPlayTime(room.playTime);
+      }
+    };
+
+    socket.on('room_state', handleRoomState);
     socket.on('pieces_state', handlePiecesState);
     socket.emit('get_pieces', roomConfig.roomId);
 
@@ -464,6 +472,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     socket.emit('get_all_scores', roomConfig.roomId);
 
     return () => {
+      socket.off('room_state', handleRoomState);
       socket.off('pieces_state', handlePiecesState);
       socket.off('score_state', handleScoreState);
       socket.off('all_scores', handleAllScores);
@@ -592,6 +601,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     socket.on('broadcast', handleBroadcast);
     socket.on('player_count', setPlayerCount);
+    socket.on('play_time_update', setPlayTime);
 
     socket.emit('broadcast', {
       roomId: roomConfig.roomId,
@@ -602,6 +612,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     return () => {
       socket.off('broadcast', handleBroadcast);
       socket.off('player_count', setPlayerCount);
+      socket.off('play_time_update', setPlayTime);
       socket.emit('leave_room', roomConfig.roomId);
     };
   }, [userId, roomConfig.roomId, GRID_COLS, GRID_ROWS, getColRow]);
@@ -915,6 +926,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
   useEffect(() => {
     if (isCompleted) {
+      socket.emit('puzzle_completed', roomConfig.roomId);
       const duration = 3 * 1000;
       const animationEnd = Date.now() + duration;
       const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
@@ -1004,6 +1016,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     );
   };
 
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -1027,6 +1047,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           <div className="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700">
             <span className="text-white font-medium">{completedCount} / {GRID_COLS * GRID_ROWS}</span>
             <span className="text-slate-400 ml-2 text-sm">Pieces Placed</span>
+          </div>
+          <div className="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 flex items-center gap-2">
+            <Clock className="w-4 h-4 text-indigo-400" />
+            <span className="text-white font-medium font-mono">{formatTime(playTime)}</span>
           </div>
           <button
             onClick={() => setShowLeaderboard(true)}

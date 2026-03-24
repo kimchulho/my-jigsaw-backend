@@ -20,6 +20,8 @@ if (!supabase) {
 const memoryRooms = new Map<string, any>();
 const memoryPieces = new Map<string, any[]>();
 const memoryScores = new Map<string, { score: number }>();
+const roomPlayTimes = new Map<string, number>();
+const roomCompleted = new Set<string>();
 
 async function getRoomsFromDB(io?: Server) {
   if (!supabase) {
@@ -27,7 +29,7 @@ async function getRoomsFromDB(io?: Server) {
       const pieces = memoryPieces.get(r.roomId) || [];
       const snappedCount = pieces.filter((p: any) => p.is_snapped).length;
       const currentPlayers = io ? (io.sockets.adapter.rooms.get(`room_${r.roomId}`)?.size || 0) : 0;
-      return { ...r, snappedCount, totalPieces: r.cols * r.rows, hasPassword: !!r.password, currentPlayers };
+      return { ...r, snappedCount, totalPieces: r.cols * r.rows, hasPassword: !!r.password, currentPlayers, playTime: roomPlayTimes.get(r.roomId) || 0, isCompleted: roomCompleted.has(r.roomId) };
     }).sort((a, b) => b.createdAt - a.createdAt);
   }
   const { data, error } = await supabase.from('puzzle_rooms').select('*').order('created_at', { ascending: false });
@@ -37,22 +39,28 @@ async function getRoomsFromDB(io?: Server) {
       const pieces = memoryPieces.get(r.roomId) || [];
       const snappedCount = pieces.filter((p: any) => p.is_snapped).length;
       const currentPlayers = io ? (io.sockets.adapter.rooms.get(`room_${r.roomId}`)?.size || 0) : 0;
-      return { ...r, snappedCount, totalPieces: r.cols * r.rows, hasPassword: !!r.password, currentPlayers };
+      return { ...r, snappedCount, totalPieces: r.cols * r.rows, hasPassword: !!r.password, currentPlayers, playTime: roomPlayTimes.get(r.roomId) || 0, isCompleted: roomCompleted.has(r.roomId) };
     }).sort((a, b) => b.createdAt - a.createdAt);
   }
   
-  const rooms = data.map(r => ({
-    roomId: r.id,
-    name: r.name,
-    imageUrl: r.image_url,
-    gridSize: r.grid_size,
-    cols: r.cols,
-    rows: r.rows,
-    creator: r.creator,
-    createdAt: Number(r.created_at),
-    maxPlayers: r.max_players || 8,
-    hasPassword: !!r.password
-  }));
+  const rooms = data.map(r => {
+    if (!roomPlayTimes.has(r.id)) roomPlayTimes.set(r.id, r.play_time || 0);
+    if (r.is_completed) roomCompleted.add(r.id);
+    return {
+      roomId: r.id,
+      name: r.name,
+      imageUrl: r.image_url,
+      gridSize: r.grid_size,
+      cols: r.cols,
+      rows: r.rows,
+      creator: r.creator,
+      createdAt: Number(r.created_at),
+      maxPlayers: r.max_players || 8,
+      hasPassword: !!r.password,
+      playTime: roomPlayTimes.get(r.id) || 0,
+      isCompleted: roomCompleted.has(r.id)
+    };
+  });
 
   // Fetch progress for each room
   const roomsWithProgress = await Promise.all(rooms.map(async (r) => {
@@ -108,6 +116,31 @@ async function startServer() {
   app.use(express.json());
 
   // Socket.io logic
+  setInterval(async () => {
+    const updates: { roomId: string, playTime: number }[] = [];
+    for (const [roomIdStr, room] of io.sockets.adapter.rooms.entries()) {
+      if (roomIdStr.startsWith('room_') && room.size > 0) {
+        const roomId = roomIdStr.replace('room_', '');
+        if (!roomCompleted.has(roomId)) {
+          const currentPlayTime = (roomPlayTimes.get(roomId) || 0) + 1;
+          roomPlayTimes.set(roomId, currentPlayTime);
+          updates.push({ roomId, playTime: currentPlayTime });
+        }
+      }
+    }
+
+    for (const update of updates) {
+      io.to(`room_${update.roomId}`).emit('play_time_update', update.playTime);
+      
+      // Save to DB every 10 seconds
+      if (update.playTime % 10 === 0 && supabase) {
+        supabase.from('puzzle_rooms').update({ play_time: update.playTime }).eq('id', update.roomId).then(({error}) => {
+          if (error) console.error('Error saving play time:', error.message);
+        });
+      }
+    }
+  }, 1000);
+
   io.on('connection', async (socket) => {
     console.log('User connected:', socket.id);
 
@@ -225,7 +258,8 @@ async function startServer() {
         rows: roomData.rows,
         creator: roomData.creator,
         createdAt: Number(roomData.created_at),
-        pieces: await getPiecesFromDB(roomId)
+        pieces: await getPiecesFromDB(roomId),
+        playTime: roomPlayTimes.get(roomId) || 0
       };
 
       socket.emit('room_state', room);
@@ -305,6 +339,19 @@ async function startServer() {
         let roomPieces = memoryPieces.get(roomId) || [];
         roomPieces = roomPieces.filter((p: any) => !pieceIds.includes(p.piece_id));
         memoryPieces.set(roomId, roomPieces);
+      }
+    });
+
+    socket.on('puzzle_completed', async (roomId: string) => {
+      if (!roomCompleted.has(roomId)) {
+        roomCompleted.add(roomId);
+        if (supabase) {
+          const playTime = roomPlayTimes.get(roomId) || 0;
+          await supabase.from('puzzle_rooms').update({ is_completed: true, play_time: playTime }).eq('id', roomId);
+        }
+        io.to(`room_${roomId}`).emit('puzzle_completed_broadcast');
+        const rooms = await getRoomsFromDB(io);
+        io.emit('rooms_list', rooms);
       }
     });
 

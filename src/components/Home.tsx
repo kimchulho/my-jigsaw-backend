@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { socket } from '../lib/socket';
 import { motion } from 'motion/react';
-import { Users, Play, Plus, Image as ImageIcon, Grid, Clock } from 'lucide-react';
+import { Users, Play, Plus, Image as ImageIcon, Grid, Clock, Trophy } from 'lucide-react';
 
 interface RoomConfig {
   roomId: string;
@@ -19,6 +19,7 @@ interface RoomMetadata extends RoomConfig {
   totalPieces?: number;
   hasPassword?: boolean;
   currentPlayers?: number;
+  playTime?: number;
 }
 
 interface HomeProps {
@@ -214,12 +215,24 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
     });
   };
 
+  const inProgressRooms = activeRooms.filter(r => r.snappedCount === undefined || r.totalPieces === undefined || r.snappedCount < r.totalPieces);
+  const completedRooms = activeRooms.filter(r => r.snappedCount !== undefined && r.totalPieces !== undefined && r.snappedCount >= r.totalPieces);
+
+  const formatTime = (seconds: number) => {
+    if (!seconds) return '00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center py-12 px-4 overflow-y-auto">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className={`w-full grid grid-cols-1 gap-8 ${existingRoom ? 'max-w-md' : 'max-w-4xl md:grid-cols-2'}`}
+        className={`w-full grid grid-cols-1 gap-8 ${existingRoom ? 'max-w-md' : 'max-w-7xl lg:grid-cols-3 md:grid-cols-2'}`}
       >
         {/* Left Column: Create/Join Form */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl text-center h-fit">
@@ -365,14 +378,14 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
             </div>
             
             <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
-              {activeRooms.length === 0 ? (
+              {inProgressRooms.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500">
                   <ImageIcon className="w-12 h-12 mb-3 opacity-20" />
                   <p>No active rooms yet.</p>
                   <p className="text-sm mt-1">Be the first to create one!</p>
                 </div>
               ) : (
-                activeRooms.map((room) => (
+                inProgressRooms.map((room) => (
                   <div 
                     key={`${room.roomId}-${room.createdAt}`}
                     className="group bg-slate-950 border border-slate-800 hover:border-indigo-500/50 rounded-2xl overflow-hidden transition-all duration-300"
@@ -427,6 +440,11 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                         <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
                           <Clock className="w-3 h-3" />
                           {new Date(room.createdAt || Date.now()).toLocaleDateString()}
+                          {room.playTime !== undefined && (
+                            <span className="ml-2 text-indigo-400 font-mono">
+                              {formatTime(room.playTime)}
+                            </span>
+                          )}
                         </p>
                       </div>
                       <button
@@ -438,6 +456,89 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Right Column: Completed Rooms Gallery */}
+        {!existingRoom && (
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col h-[600px] md:col-span-2 lg:col-span-1">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-400" />
+                Completed Puzzles
+              </h2>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              {completedRooms.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-500">
+                  <Trophy className="w-12 h-12 mb-3 opacity-20" />
+                  <p>No completed puzzles yet.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-4">
+                  {completedRooms.map((room) => (
+                    <div 
+                      key={`${room.roomId}-${room.createdAt}`}
+                      className="group bg-slate-950 border border-slate-800 hover:border-amber-500/50 rounded-2xl overflow-hidden transition-all duration-300"
+                    >
+                      <div className="h-32 w-full overflow-hidden relative">
+                        <img 
+                          src={room.imageUrl} 
+                          alt="Puzzle preview" 
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent" />
+                        <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
+                          <div className="flex gap-2 items-center">
+                            <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-white px-2 py-1 rounded-md border border-slate-700">
+                              {room.cols * room.rows} Pieces
+                            </span>
+                            {room.hasPassword && (
+                              <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-amber-400 px-2 py-1 rounded-md border border-slate-700 flex items-center gap-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs text-slate-300 flex items-center gap-1 drop-shadow-md">
+                            <Users className="w-3 h-3" /> Created by {room.creator}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="w-full bg-slate-800 h-1.5 overflow-hidden">
+                        <div className="bg-amber-500 h-full w-full" />
+                      </div>
+                      <div className="p-4 flex items-center justify-between">
+                        <div className="text-left">
+                          <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                            Room #{room.roomId}
+                          </p>
+                          <p className="text-xs text-amber-400 font-medium mt-1">
+                            100% Complete
+                          </p>
+                          <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                            <Clock className="w-3 h-3" />
+                            {new Date(room.createdAt || Date.now()).toLocaleDateString()}
+                            {room.playTime !== undefined && (
+                              <span className="ml-2 text-amber-400 font-mono">
+                                {formatTime(room.playTime)}
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleJoinSpecificRoom(room)}
+                          className="bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                        >
+                          View
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>

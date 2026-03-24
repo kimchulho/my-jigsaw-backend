@@ -12,12 +12,22 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL ||
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
+if (!supabase) {
+  console.warn('⚠️ Supabase credentials not found. Falling back to in-memory storage.');
+}
+
+// In-memory fallback
+const memoryRooms = new Map<string, any>();
+const memoryPieces = new Map<string, any[]>();
+
 async function getRoomsFromDB() {
-  if (!supabase) return [];
+  if (!supabase) {
+    return Array.from(memoryRooms.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }
   const { data, error } = await supabase.from('puzzle_rooms').select('*').order('created_at', { ascending: false });
   if (error) {
-    console.error('Error fetching rooms:', error);
-    return [];
+    console.error('Error fetching rooms from Supabase:', error.message);
+    return Array.from(memoryRooms.values()).sort((a, b) => b.createdAt - a.createdAt);
   }
   return data.map(r => ({
     roomId: r.id,
@@ -32,11 +42,13 @@ async function getRoomsFromDB() {
 }
 
 async function getPiecesFromDB(roomId: string) {
-  if (!supabase) return [];
+  if (!supabase) {
+    return memoryPieces.get(roomId) || [];
+  }
   const { data, error } = await supabase.from('puzzle_pieces').select('*').eq('room_id', roomId);
   if (error) {
-    console.error('Error fetching pieces:', error);
-    return [];
+    console.error('Error fetching pieces from Supabase:', error.message);
+    return memoryPieces.get(roomId) || [];
   }
   return data.map(p => ({
     piece_id: p.piece_id,
@@ -71,6 +83,7 @@ async function startServer() {
     });
 
     socket.on('create_room', async (roomData: any) => {
+      let useMemory = !supabase;
       if (supabase) {
         const { error } = await supabase.from('puzzle_rooms').insert({
           id: roomData.id,
@@ -82,7 +95,24 @@ async function startServer() {
           creator: roomData.creator,
           created_at: roomData.createdAt
         });
-        if (error) console.error('Error creating room:', error);
+        if (error) {
+          console.error('Error creating room in Supabase:', error.message);
+          useMemory = true; // Fallback if RLS or other error blocks insert
+        }
+      }
+      
+      if (useMemory) {
+        memoryRooms.set(roomData.id, {
+          roomId: roomData.id,
+          name: roomData.name,
+          imageUrl: roomData.imageUrl,
+          gridSize: roomData.gridSize,
+          cols: roomData.cols,
+          rows: roomData.rows,
+          creator: roomData.creator,
+          createdAt: roomData.createdAt
+        });
+        memoryPieces.set(roomData.id, []);
       }
       
       const rooms = await getRoomsFromDB();
@@ -92,10 +122,16 @@ async function startServer() {
     socket.on('join_room', async (roomId: string) => {
       socket.join(`room_${roomId}`);
       
+      let room = null;
+      let useMemory = !supabase;
+
       if (supabase) {
-        const { data } = await supabase.from('puzzle_rooms').select('*').eq('id', roomId).single();
-        if (data) {
-          const room = {
+        const { data, error } = await supabase.from('puzzle_rooms').select('*').eq('id', roomId).single();
+        if (error) {
+          console.error('Error joining room in Supabase:', error.message);
+          useMemory = true;
+        } else if (data) {
+          room = {
             id: data.id,
             name: data.name,
             imageUrl: data.image_url,
@@ -106,8 +142,26 @@ async function startServer() {
             createdAt: Number(data.created_at),
             pieces: await getPiecesFromDB(roomId)
           };
-          socket.emit('room_state', room);
         }
+      }
+
+      if (useMemory && memoryRooms.has(roomId)) {
+        const memRoom = memoryRooms.get(roomId);
+        room = {
+          id: memRoom.roomId,
+          name: memRoom.name,
+          imageUrl: memRoom.imageUrl,
+          gridSize: memRoom.gridSize,
+          cols: memRoom.cols,
+          rows: memRoom.rows,
+          creator: memRoom.creator,
+          createdAt: memRoom.createdAt,
+          pieces: await getPiecesFromDB(roomId)
+        };
+      }
+
+      if (room) {
+        socket.emit('room_state', room);
       }
 
       const count = io.sockets.adapter.rooms.get(`room_${roomId}`)?.size || 0;
@@ -126,25 +180,59 @@ async function startServer() {
     });
 
     socket.on('upsert_pieces', async ({ roomId, pieces }: { roomId: string, pieces: any[] }) => {
-      if (!supabase || !pieces || pieces.length === 0) return;
+      if (!pieces || pieces.length === 0) return;
       
-      const upsertData = pieces.map(p => ({
-        room_id: roomId,
-        piece_id: p.piece_id,
-        current_x: p.current_x,
-        current_y: p.current_y,
-        is_snapped: p.is_snapped,
-        locked_by: p.locked_by
-      }));
+      let useMemory = !supabase;
 
-      const { error } = await supabase.from('puzzle_pieces').upsert(upsertData, { onConflict: 'room_id,piece_id' });
-      if (error) console.error('Error upserting pieces:', error);
+      if (supabase) {
+        const upsertData = pieces.map(p => ({
+          room_id: roomId,
+          piece_id: p.piece_id,
+          current_x: p.current_x,
+          current_y: p.current_y,
+          is_snapped: p.is_snapped,
+          locked_by: p.locked_by
+        }));
+
+        const { error } = await supabase.from('puzzle_pieces').upsert(upsertData, { onConflict: 'room_id,piece_id' });
+        if (error) {
+          console.error('Error upserting pieces in Supabase:', error.message);
+          useMemory = true;
+        }
+      }
+
+      if (useMemory) {
+        const roomPieces = memoryPieces.get(roomId) || [];
+        for (const p of pieces) {
+          const idx = roomPieces.findIndex((rp: any) => rp.piece_id === p.piece_id);
+          if (idx !== -1) {
+            roomPieces[idx] = { ...roomPieces[idx], ...p };
+          } else {
+            roomPieces.push(p);
+          }
+        }
+        memoryPieces.set(roomId, roomPieces);
+      }
     });
 
     socket.on('delete_pieces', async ({ roomId, pieceIds }: { roomId: string, pieceIds: number[] }) => {
-      if (!supabase || !pieceIds || pieceIds.length === 0) return;
-      const { error } = await supabase.from('puzzle_pieces').delete().eq('room_id', roomId).in('piece_id', pieceIds);
-      if (error) console.error('Error deleting pieces:', error);
+      if (!pieceIds || pieceIds.length === 0) return;
+      
+      let useMemory = !supabase;
+
+      if (supabase) {
+        const { error } = await supabase.from('puzzle_pieces').delete().eq('room_id', roomId).in('piece_id', pieceIds);
+        if (error) {
+          console.error('Error deleting pieces in Supabase:', error.message);
+          useMemory = true;
+        }
+      }
+
+      if (useMemory) {
+        let roomPieces = memoryPieces.get(roomId) || [];
+        roomPieces = roomPieces.filter((p: any) => !pieceIds.includes(p.piece_id));
+        memoryPieces.set(roomId, roomPieces);
+      }
     });
 
     socket.on('broadcast', (payload: any) => {

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -88,10 +88,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       }
     }
     
-    // Sort by distance to the center of the board so pieces cluster around it
+    // Sort by Chebyshev distance (normalized by board dimensions) to form a rectangular arrangement
     positions.sort((a, b) => {
-      const distA = Math.pow(a.x - centerX, 2) + Math.pow(a.y - centerY, 2);
-      const distB = Math.pow(b.x - centerX, 2) + Math.pow(b.y - centerY, 2);
+      const distA = Math.max(Math.abs(a.x - centerX) / BOARD_WIDTH, Math.abs(a.y - centerY) / BOARD_HEIGHT);
+      const distB = Math.max(Math.abs(b.x - centerX) / BOARD_WIDTH, Math.abs(b.y - centerY) / BOARD_HEIGHT);
       return distA - distB;
     });
     
@@ -119,6 +119,11 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [isStageDragging, setIsStageDragging] = useState(false);
   const [bgColor, setBgColor] = useState('bg-slate-900');
   const [showLargePreview, setShowLargePreview] = useState(false);
+  const [hasFittedView, setHasFittedView] = useState(false);
+  const [isIdleDisconnected, setIsIdleDisconnected] = useState(false);
+  
+  const idleTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
   const totalPieces = GRID_COLS * GRID_ROWS;
   const showBoardBackground = totalPieces <= 150;
@@ -267,6 +272,98 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Idle timeout logic
+  const handleIdleTimeout = useCallback(() => {
+    if (socket.connected) {
+      socket.disconnect();
+      setIsIdleDisconnected(true);
+    }
+  }, []);
+
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimeoutRef.current) {
+      clearTimeout(idleTimeoutRef.current);
+    }
+    if (!isIdleDisconnected) {
+      idleTimeoutRef.current = setTimeout(handleIdleTimeout, IDLE_TIMEOUT_MS);
+    }
+  }, [handleIdleTimeout, isIdleDisconnected, IDLE_TIMEOUT_MS]);
+
+  useEffect(() => {
+    const events = ['mousemove', 'mousedown', 'touchstart', 'keydown', 'wheel'];
+    const handleActivity = () => resetIdleTimer();
+
+    events.forEach(event => window.addEventListener(event, handleActivity));
+    resetIdleTimer(); // Initial start
+
+    return () => {
+      events.forEach(event => window.removeEventListener(event, handleActivity));
+      if (idleTimeoutRef.current) clearTimeout(idleTimeoutRef.current);
+    };
+  }, [resetIdleTimer]);
+
+  const handleReconnect = () => {
+    setIsIdleDisconnected(false);
+    socket.connect();
+    socket.emit('join_room', roomConfig.roomId);
+    socket.emit('get_pieces', roomConfig.roomId);
+    resetIdleTimer();
+  };
+
+  const fitViewToPieces = useCallback((piecesToFit: PuzzlePiece[]) => {
+    if (!stageRef.current || piecesToFit.length === 0 || dimensions.width === 0) return;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    piecesToFit.forEach(p => {
+      if (p.current_x < minX) minX = p.current_x;
+      if (p.current_y < minY) minY = p.current_y;
+      if (p.current_x + PIECE_WIDTH > maxX) maxX = p.current_x + PIECE_WIDTH;
+      if (p.current_y + PIECE_HEIGHT > maxY) maxY = p.current_y + PIECE_HEIGHT;
+    });
+
+    // Add padding around the edges
+    const padding = 100;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+
+    const scaleX = dimensions.width / contentWidth;
+    const scaleY = dimensions.height / contentHeight;
+    const newScale = Math.min(scaleX, scaleY, 1); // Cap max zoom at 1 so it doesn't zoom in too much
+
+    const newPos = {
+      x: (dimensions.width - contentWidth * newScale) / 2 - minX * newScale,
+      y: (dimensions.height - contentHeight * newScale) / 2 - minY * newScale
+    };
+
+    const stage = stageRef.current;
+    stage.scaleX(newScale);
+    stage.scaleY(newScale);
+    stage.position(newPos);
+    stage.batchDraw();
+
+    stageScale.current = newScale;
+    stagePos.current = newPos;
+  }, [dimensions.width, dimensions.height, PIECE_WIDTH, PIECE_HEIGHT]);
+
+  useEffect(() => {
+    if (pieces.length > 0 && !hasFittedView && dimensions.width > 0) {
+      // Small delay to ensure Konva stage is fully rendered
+      setTimeout(() => {
+        fitViewToPieces(pieces);
+        setHasFittedView(true);
+      }, 100);
+    }
+  }, [pieces, hasFittedView, dimensions.width, fitViewToPieces]);
 
   // Initialize pieces from DB
   useEffect(() => {
@@ -865,6 +962,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
                 payload: { pieces: resetPieces },
               });
               socket.emit('upsert_pieces', { roomId: roomConfig.roomId, pieces: resetPieces });
+              
+              // Re-fit the view to show all pieces
+              setTimeout(() => fitViewToPieces(resetPieces), 50);
             }}
             className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 text-slate-300 text-sm transition-colors"
           >
@@ -1029,6 +1129,35 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               alt="Puzzle Large Preview" 
               className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl border border-slate-700"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Idle Disconnect Modal */}
+      {isIdleDisconnected && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-8 pointer-events-auto">
+          <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl max-w-md w-full text-center flex flex-col items-center animate-in zoom-in-95 duration-300">
+            <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mb-4">
+              <Clock className="w-8 h-8 text-slate-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">Are you still there?</h2>
+            <p className="text-slate-300 mb-8">
+              You have been disconnected from the server due to 5 minutes of inactivity.
+            </p>
+            <div className="flex gap-4 w-full">
+              <button
+                onClick={onBack}
+                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-xl font-medium transition-colors"
+              >
+                Return to Lobby
+              </button>
+              <button
+                onClick={handleReconnect}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-medium transition-colors"
+              >
+                Reconnect
+              </button>
+            </div>
           </div>
         </div>
       )}

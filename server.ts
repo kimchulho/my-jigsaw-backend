@@ -22,14 +22,23 @@ const memoryPieces = new Map<string, any[]>();
 
 async function getRoomsFromDB() {
   if (!supabase) {
-    return Array.from(memoryRooms.values()).sort((a, b) => b.createdAt - a.createdAt);
+    return Array.from(memoryRooms.values()).map(r => {
+      const pieces = memoryPieces.get(r.roomId) || [];
+      const snappedCount = pieces.filter((p: any) => p.is_snapped).length;
+      return { ...r, snappedCount, totalPieces: r.cols * r.rows };
+    }).sort((a, b) => b.createdAt - a.createdAt);
   }
   const { data, error } = await supabase.from('puzzle_rooms').select('*').order('created_at', { ascending: false });
   if (error) {
     console.error('Error fetching rooms from Supabase:', error.message);
-    return Array.from(memoryRooms.values()).sort((a, b) => b.createdAt - a.createdAt);
+    return Array.from(memoryRooms.values()).map(r => {
+      const pieces = memoryPieces.get(r.roomId) || [];
+      const snappedCount = pieces.filter((p: any) => p.is_snapped).length;
+      return { ...r, snappedCount, totalPieces: r.cols * r.rows };
+    }).sort((a, b) => b.createdAt - a.createdAt);
   }
-  return data.map(r => ({
+  
+  const rooms = data.map(r => ({
     roomId: r.id,
     name: r.name,
     imageUrl: r.image_url,
@@ -39,6 +48,27 @@ async function getRoomsFromDB() {
     creator: r.creator,
     createdAt: Number(r.created_at)
   }));
+
+  // Fetch progress for each room
+  const roomsWithProgress = await Promise.all(rooms.map(async (r) => {
+    const { count, error: countError } = await supabase
+      .from('puzzle_pieces')
+      .select('*', { count: 'exact', head: true })
+      .eq('room_id', r.roomId)
+      .eq('is_snapped', true);
+      
+    if (countError) {
+      console.error(`Error fetching progress for room ${r.roomId}:`, countError.message);
+    }
+    
+    return {
+      ...r,
+      snappedCount: count || 0,
+      totalPieces: (r.cols && r.rows) ? (r.cols * r.rows) : r.gridSize
+    };
+  }));
+
+  return roomsWithProgress;
 }
 
 async function getPiecesFromDB(roomId: string) {

@@ -13,6 +13,8 @@ interface RoomConfig {
 interface RoomMetadata extends RoomConfig {
   creator: string;
   createdAt: number;
+  snappedCount?: number;
+  totalPieces?: number;
 }
 
 interface HomeProps {
@@ -38,6 +40,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
     });
 
     socket.on('rooms_list', (rooms: RoomMetadata[]) => {
+      console.log('Received rooms:', rooms);
       // Sort by newest first
       rooms.sort((a, b) => b.createdAt - a.createdAt);
       setActiveRooms(rooms);
@@ -272,9 +275,22 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                         </span>
                       </div>
                     </div>
+                    {room.snappedCount !== undefined && room.totalPieces !== undefined && (
+                      <div className="w-full bg-slate-800 h-1.5 overflow-hidden">
+                        <div 
+                          className="bg-indigo-500 h-full transition-all duration-500"
+                          style={{ width: `${Math.round((room.snappedCount / room.totalPieces) * 100)}%` }}
+                        />
+                      </div>
+                    )}
                     <div className="p-4 flex items-center justify-between">
                       <div className="text-left">
                         <p className="text-sm font-medium text-slate-300">Room #{room.roomId}</p>
+                        {room.snappedCount !== undefined && room.totalPieces !== undefined && (
+                          <p className="text-xs text-indigo-400 font-medium mt-1">
+                            {Math.round((room.snappedCount / room.totalPieces) * 100)}% Complete ({room.snappedCount}/{room.totalPieces})
+                          </p>
+                        )}
                         <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
                           <Clock className="w-3 h-3" />
                           {new Date(room.createdAt || Date.now()).toLocaleDateString()}

@@ -19,6 +19,7 @@ if (!supabase) {
 // In-memory fallback
 const memoryRooms = new Map<string, any>();
 const memoryPieces = new Map<string, any[]>();
+const memoryScores = new Map<string, { board_score: number, connection_score: number }>();
 
 async function getRoomsFromDB() {
   if (!supabase) {
@@ -263,6 +264,57 @@ async function startServer() {
         roomPieces = roomPieces.filter((p: any) => !pieceIds.includes(p.piece_id));
         memoryPieces.set(roomId, roomPieces);
       }
+    });
+
+    socket.on('get_score', async ({ roomId, username }: { roomId: string, username: string }) => {
+      let boardScore = 0;
+      let connectionScore = 0;
+      
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('puzzle_scores')
+          .select('board_score, connection_score')
+          .eq('room_id', roomId)
+          .eq('username', username)
+          .single();
+          
+        if (!error && data) {
+          boardScore = data.board_score;
+          connectionScore = data.connection_score;
+        } else {
+          const mem = memoryScores.get(`${roomId}_${username}`);
+          if (mem) {
+            boardScore = mem.board_score;
+            connectionScore = mem.connection_score;
+          }
+        }
+      } else {
+        const mem = memoryScores.get(`${roomId}_${username}`);
+        if (mem) {
+          boardScore = mem.board_score;
+          connectionScore = mem.connection_score;
+        }
+      }
+      
+      socket.emit('score_state', { boardScore, connectionScore });
+    });
+
+    socket.on('update_score', async ({ roomId, username, boardScore, connectionScore }: { roomId: string, username: string, boardScore: number, connectionScore: number }) => {
+      if (supabase) {
+        const { error } = await supabase
+          .from('puzzle_scores')
+          .upsert({
+            room_id: roomId,
+            username: username,
+            board_score: boardScore,
+            connection_score: connectionScore
+          }, { onConflict: 'room_id,username' });
+          
+        if (error) {
+          console.error('Error upserting score:', error.message);
+        }
+      }
+      memoryScores.set(`${roomId}_${username}`, { board_score: boardScore, connection_score: connectionScore });
     });
 
     socket.on('broadcast', (payload: any) => {

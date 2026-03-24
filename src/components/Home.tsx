@@ -25,7 +25,13 @@ interface HomeProps {
 export default function Home({ existingRoom, onEnter }: HomeProps) {
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [isConnecting, setIsConnecting] = useState(true);
-  const [username, setUsername] = useState(`익명_${Math.floor(Math.random() * 10000)}`);
+  const [username, setUsername] = useState(() => {
+    return localStorage.getItem('puzzle_username') || `익명_${Math.floor(Math.random() * 10000)}`;
+  });
+  
+  useEffect(() => {
+    localStorage.setItem('puzzle_username', username);
+  }, [username]);
   
   // Room creation state
   const [isCreating, setIsCreating] = useState(!existingRoom);

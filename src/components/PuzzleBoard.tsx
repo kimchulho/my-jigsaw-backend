@@ -418,8 +418,17 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     socket.on('pieces_state', handlePiecesState);
     socket.emit('get_pieces', roomConfig.roomId);
 
+    const handleScoreState = (data: { boardScore: number, connectionScore: number }) => {
+      setBoardScore(data.boardScore);
+      setConnectionScore(data.connectionScore);
+    };
+    
+    socket.on('score_state', handleScoreState);
+    socket.emit('get_score', { roomId: roomConfig.roomId, username });
+
     return () => {
       socket.off('pieces_state', handlePiecesState);
+      socket.off('score_state', handleScoreState);
     };
   }, [roomConfig.roomId, GRID_COLS, GRID_ROWS, BOARD_WIDTH, BOARD_HEIGHT, getColRow]);
 
@@ -729,13 +738,17 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
 
     const finalPieces: any[] = [];
+    let newBoardScore = boardScore;
+    let newConnectionScore = connectionScore;
 
     for (const p of piecesRef.current) {
       if (groupIds.includes(p.piece_id)) {
         const finalX = p.current_x + deltaX + dx;
         const finalY = p.current_y + deltaY + dy;
         
-        if (isSnapped && !p.is_snapped) setBoardScore(s => s + 1);
+        if (isSnapped && !p.is_snapped) {
+          newBoardScore += 1;
+        }
         
         finalPieces.push({ 
           piece_id: p.piece_id, 
@@ -747,7 +760,21 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       }
     }
     
-    if (snappedToAdjacent) setConnectionScore(s => s + 1);
+    if (snappedToAdjacent) {
+      newConnectionScore += 1;
+    }
+
+    if (newBoardScore !== boardScore) setBoardScore(newBoardScore);
+    if (newConnectionScore !== connectionScore) setConnectionScore(newConnectionScore);
+    
+    if (newBoardScore !== boardScore || newConnectionScore !== connectionScore) {
+      socket.emit('update_score', { 
+        roomId: roomConfig.roomId, 
+        username, 
+        boardScore: newBoardScore, 
+        connectionScore: newConnectionScore 
+      });
+    }
 
     setPieces((prev) =>
       prev.map((p) => {

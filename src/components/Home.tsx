@@ -22,11 +22,20 @@ interface HomeProps {
   onEnter: (username: string, config?: RoomConfig) => void;
 }
 
+const getBrowserTag = () => {
+  let tag = localStorage.getItem('puzzle_user_tag');
+  if (!tag) {
+    tag = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    localStorage.setItem('puzzle_user_tag', tag);
+  }
+  return tag;
+};
+
 export default function Home({ existingRoom, onEnter }: HomeProps) {
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [isConnecting, setIsConnecting] = useState(true);
   const [username, setUsername] = useState(() => {
-    return localStorage.getItem('puzzle_username') || `익명_${Math.floor(Math.random() * 10000)}`;
+    return localStorage.getItem('puzzle_username') || `익명#${getBrowserTag()}`;
   });
   
   useEffect(() => {
@@ -64,7 +73,14 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
   }, []);
 
   const handleCreateRoom = () => {
-    if (!username.trim()) return;
+    let finalUsername = username.trim();
+    if (!finalUsername) return;
+    
+    if (!finalUsername.includes('#')) {
+      finalUsername = `${finalUsername}#${getBrowserTag()}`;
+      setUsername(finalUsername);
+      localStorage.setItem('puzzle_username', finalUsername);
+    }
     
     setIsCalculating(true);
     
@@ -90,14 +106,14 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
         gridSize: finalCols * finalRows,
         cols: finalCols,
         rows: finalRows,
-        creator: username,
+        creator: finalUsername,
         createdAt: Date.now(),
         pieces: [] // Will be initialized by the first player joining
       };
 
       socket.emit('create_room', roomData);
       
-      onEnter(username, {
+      onEnter(finalUsername, {
         roomId,
         imageUrl,
         cols: finalCols,
@@ -113,18 +129,33 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
   };
 
   const handleJoinRoom = () => {
-    if (!username.trim()) return;
+    let finalUsername = username.trim();
+    if (!finalUsername) return;
+    
+    if (!finalUsername.includes('#')) {
+      finalUsername = `${finalUsername}#${getBrowserTag()}`;
+      setUsername(finalUsername);
+      localStorage.setItem('puzzle_username', finalUsername);
+    }
+    
     // If joining an existing room, the config is already in App.tsx state
-    onEnter(username);
+    onEnter(finalUsername);
   };
 
   const handleJoinSpecificRoom = (room: RoomMetadata) => {
-    if (!username.trim()) {
+    let finalUsername = username.trim();
+    if (!finalUsername) {
       alert('Please enter your name first!');
       return;
     }
     
-    onEnter(username, room);
+    if (!finalUsername.includes('#')) {
+      finalUsername = `${finalUsername}#${getBrowserTag()}`;
+      setUsername(finalUsername);
+      localStorage.setItem('puzzle_username', finalUsername);
+    }
+    
+    onEnter(finalUsername, room);
   };
 
   return (

@@ -126,7 +126,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
   const totalPieces = GRID_COLS * GRID_ROWS;
-  const showBoardBackground = totalPieces <= 150;
+  const isSmallPuzzle = totalPieces <= 200;
+  const [showBoardBackground, setShowBoardBackground] = useState(isSmallPuzzle);
   
   const bgColors = [
     'bg-slate-900',
@@ -314,12 +315,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   };
 
   const fitViewToPieces = useCallback((piecesToFit: PuzzlePiece[]) => {
-    if (!stageRef.current || piecesToFit.length === 0 || dimensions.width === 0) return;
+    if (!stageRef.current || piecesToFit.length === 0 || dimensions.width === 0) return false;
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+    let minX = 0;
+    let minY = 0;
+    let maxX = BOARD_WIDTH;
+    let maxY = BOARD_HEIGHT;
 
     piecesToFit.forEach(p => {
       if (p.current_x < minX) minX = p.current_x;
@@ -355,14 +356,15 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     stageScale.current = newScale;
     stagePos.current = newPos;
-  }, [dimensions.width, dimensions.height, PIECE_WIDTH, PIECE_HEIGHT]);
+    return true;
+  }, [dimensions.width, dimensions.height, PIECE_WIDTH, PIECE_HEIGHT, BOARD_WIDTH, BOARD_HEIGHT]);
 
   useEffect(() => {
     if (pieces.length > 0 && !hasFittedView && dimensions.width > 0) {
       // Small delay to ensure Konva stage is fully rendered
       setTimeout(() => {
-        fitViewToPieces(pieces);
-        setHasFittedView(true);
+        const success = fitViewToPieces(pieces);
+        if (success) setHasFittedView(true);
       }, 100);
     }
   }, [pieces, hasFittedView, dimensions.width, fitViewToPieces]);
@@ -1019,9 +1021,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
                       <span className={`font-bold text-xs w-4 text-center ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-gray-300' : idx === 2 ? 'text-amber-600' : 'text-slate-400'}`}>
                         {idx + 1}
                       </span>
-                      <span className={`truncate max-w-[80px] text-sm ${player.username === username ? 'text-indigo-300 font-semibold' : 'text-slate-200'}`}>
-                        {player.username}
-                      </span>
+                      <div className={`flex items-baseline max-w-[100px] ${player.username === username ? 'text-indigo-300 font-semibold' : 'text-slate-200'}`}>
+                        <span className="truncate text-sm">
+                          {player.username.split('#')[0]}
+                        </span>
+                        {player.username.includes('#') && (
+                          <span className="text-[10px] opacity-50 ml-0.5 shrink-0">#{player.username.split('#')[1]}</span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex flex-col items-end leading-tight">
                       <span className="text-white text-sm font-bold">{totalScore}</span>
@@ -1082,9 +1089,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             y={0}
             width={BOARD_WIDTH}
             height={BOARD_HEIGHT}
-            stroke="#334155"
-            strokeWidth={2}
-            dash={[10, 10]}
+            stroke="#818cf8"
+            strokeWidth={4}
+            dash={[15, 10]}
+            fill="rgba(15, 23, 42, 0.3)"
           />
           {image && showBoardBackground && (
             <KonvaImage
@@ -1111,13 +1119,23 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
       {/* Manual Zoom & Settings Controls */}
       <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
+        {isSmallPuzzle && (
+          <button
+            onClick={() => setShowBoardBackground(!showBoardBackground)}
+            className={`backdrop-blur-md p-3 rounded-full border shadow-lg transition-colors ${showBoardBackground ? 'bg-indigo-600 hover:bg-indigo-500 border-indigo-500 text-white' : 'bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-300'}`}
+            aria-label="Toggle Background Guide"
+            title="Toggle Background Guide"
+          >
+            <ImageIcon size={24} />
+          </button>
+        )}
         <button
           onClick={() => {
             const currentIndex = bgColors.indexOf(bgColor);
             const nextIndex = (currentIndex + 1) % bgColors.length;
             setBgColor(bgColors[nextIndex]);
           }}
-          className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors"
+          className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors mt-2"
           aria-label="Change Background Color"
           title="Change Background Color"
         >
@@ -1140,7 +1158,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       </div>
 
       {/* Minimap for large puzzles */}
-      {!showBoardBackground && image && (
+      {totalPieces > 200 && image && (
         <div className="absolute bottom-6 left-6 z-20 flex flex-col gap-2">
           <div className="bg-slate-800/80 backdrop-blur-md p-2 rounded-xl border border-slate-700 shadow-lg pointer-events-auto">
             <div 

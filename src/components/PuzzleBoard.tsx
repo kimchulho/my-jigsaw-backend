@@ -6,7 +6,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { Loader2 } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
-import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
+import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
+import useImage from 'use-image';
+import Konva from 'konva';
 
 const SNAP_DISTANCE = 30;
 
@@ -43,6 +45,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const parsedRoomId = parseInt(roomConfig.roomId, 10);
   const ROOM_OFFSET = isNaN(parsedRoomId) ? 0 : parsedRoomId * 10000;
 
+  const [image] = useImage(IMAGE_URL, 'anonymous');
+
   const getColRow = useCallback((id: number) => {
     const i = id % 10000;
     return { col: i % GRID_COLS, row: Math.floor(i / GRID_COLS) };
@@ -52,19 +56,19 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [userId] = useState(() => uuidv4());
   const [isReady, setIsReady] = useState(false);
   
+  const stageScale = useRef(1);
+  const stagePos = useRef({ x: 0, y: 0 });
+  
   const [playerCount, setPlayerCount] = useState(1);
   const [boardScore, setBoardScore] = useState(0);
   const [connectionScore, setConnectionScore] = useState(0);
   
-  const transformComponentRef = useRef<ReactZoomPanPinchRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
+  const stageRef = useRef<Konva.Stage>(null);
+  
   const draggingGroupRef = useRef<number[]>([]);
   const lastBroadcastRef = useRef<number>(0);
   const piecesRef = useRef<PuzzlePiece[]>([]);
-  
-  const [isDraggingPiece, setIsDraggingPiece] = useState(false);
-  const lastPointer = useRef({ x: 0, y: 0 });
 
   const getConnectedGroup = (startId: number, allPieces: PuzzlePiece[]) => {
     const group = new Set<number>([startId]);
@@ -102,6 +106,39 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   useEffect(() => {
     piecesRef.current = pieces;
   }, [pieces]);
+
+  // Center the camera on mount
+  useEffect(() => {
+    stagePos.current = {
+      x: window.innerWidth / 2 - BOARD_WIDTH / 2,
+      y: window.innerHeight / 2 - BOARD_HEIGHT / 2,
+    };
+    if (stageRef.current) {
+      stageRef.current.position(stagePos.current);
+      stageRef.current.batchDraw();
+    }
+  }, [BOARD_WIDTH, BOARD_HEIGHT]);
+
+  // Prevent native browser touch actions (scrolling, zooming) on the canvas
+  useEffect(() => {
+    if (!isReady || !containerRef.current) return;
+    
+    const container = containerRef.current;
+    
+    const preventDefault = (e: Event) => {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    };
+    
+    container.addEventListener('touchmove', preventDefault, { passive: false });
+    container.addEventListener('wheel', preventDefault, { passive: false });
+    
+    return () => {
+      container.removeEventListener('touchmove', preventDefault);
+      container.removeEventListener('wheel', preventDefault);
+    };
+  }, [isReady]);
 
   // Handle window resize
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -273,16 +310,17 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     };
   }, [userId, roomConfig.roomId, GRID_COLS, GRID_ROWS, getColRow]);
 
-  // Handle Dragging via Pointer Events
-  const handlePointerDown = (e: React.PointerEvent, piece: PuzzlePiece) => {
-    if (e.button !== 0 && e.pointerType === 'mouse') return; // Only left click
-    if (piece.is_snapped || (piece.locked_by && piece.locked_by !== userId)) return;
+  const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>, piece: PuzzlePiece) => {
+    const evt = e.evt as any;
+    if (evt && evt.touches && evt.touches.length > 1) {
+      e.target.stopDrag();
+      return;
+    }
 
-    e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-
-    setIsDraggingPiece(true);
-    lastPointer.current = { x: e.clientX, y: e.clientY };
+    if (piece.is_snapped || (piece.locked_by && piece.locked_by !== userId)) {
+      e.target.stopDrag();
+      return;
+    }
 
     const groupIds = getConnectedGroup(piece.piece_id, piecesRef.current);
     draggingGroupRef.current = groupIds;
@@ -300,169 +338,208 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     });
   };
 
-  useEffect(() => {
-    if (!isDraggingPiece) return;
+  const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
+    const groupIds = draggingGroupRef.current;
+    if (groupIds.length === 0) return;
 
-    const handlePointerMove = (e: PointerEvent) => {
-      const groupIds = draggingGroupRef.current;
-      if (groupIds.length === 0) return;
+    const targetNode = e.target;
+    const pieceIdStr = targetNode.id().replace('piece-', '');
+    const draggedPieceId = parseInt(pieceIdStr, 10);
+    
+    const draggedPiece = piecesRef.current.find(p => p.piece_id === draggedPieceId);
+    if (!draggedPiece) return;
 
-      const scale = transformComponentRef.current?.instance.transformState.scale || 1;
-      const deltaX = (e.clientX - lastPointer.current.x) / scale;
-      const deltaY = (e.clientY - lastPointer.current.y) / scale;
-      lastPointer.current = { x: e.clientX, y: e.clientY };
+    const newX = targetNode.x();
+    const newY = targetNode.y();
+    const deltaX = newX - draggedPiece.current_x;
+    const deltaY = newY - draggedPiece.current_y;
 
-      const updatedPieces: {piece_id: number, current_x: number, current_y: number}[] = [];
+    const updatedPieces: {piece_id: number, current_x: number, current_y: number}[] = [];
 
-      setPieces(prev => prev.map(p => {
-        if (groupIds.includes(p.piece_id)) {
-          const newX = p.current_x + deltaX;
-          const newY = p.current_y + deltaY;
-          updatedPieces.push({ piece_id: p.piece_id, current_x: newX, current_y: newY });
-          return { ...p, current_x: newX, current_y: newY };
-        }
-        return p;
-      }));
-
-      const now = Date.now();
-      if (now - lastBroadcastRef.current > 33) {
-        socket.emit('broadcast', {
-          roomId: roomConfig.roomId,
-          event: 'cursor-pos',
-          payload: { pieces: updatedPieces, locked_by: userId },
+    for (const p of piecesRef.current) {
+      if (groupIds.includes(p.piece_id)) {
+        updatedPieces.push({ 
+          piece_id: p.piece_id, 
+          current_x: p.current_x + deltaX, 
+          current_y: p.current_y + deltaY 
         });
-        lastBroadcastRef.current = now;
-      }
-    };
-
-    const handlePointerUp = (e: PointerEvent) => {
-      const groupIds = draggingGroupRef.current;
-      if (groupIds.length === 0) {
-        setIsDraggingPiece(false);
-        return;
-      }
-
-      setIsDraggingPiece(false);
-      draggingGroupRef.current = [];
-
-      const firstPieceId = groupIds[0];
-      const firstPiece = piecesRef.current.find(p => p.piece_id === firstPieceId);
-      if (!firstPiece || firstPiece.locked_by !== userId) return;
-
-      let dx = 0;
-      let dy = 0;
-      let isSnapped = false;
-      let snappedToAdjacent = false;
-
-      const { col, row } = getColRow(firstPieceId);
-      const targetBoardX = col * PIECE_WIDTH;
-      const targetBoardY = row * PIECE_HEIGHT;
-
-      const distanceToBoard = Math.sqrt(
-        Math.pow(firstPiece.current_x - targetBoardX, 2) + Math.pow(firstPiece.current_y - targetBoardY, 2)
-      );
-
-      if (distanceToBoard < SNAP_DISTANCE) {
-        isSnapped = true;
-        dx = targetBoardX - firstPiece.current_x;
-        dy = targetBoardY - firstPiece.current_y;
-      } else {
-        // Check adjacent snaps
-        for (const id of groupIds) {
-          if (snappedToAdjacent) break;
-          
-          const p = piecesRef.current.find(p => p.piece_id === id);
-          if (!p) continue;
-          
-          const { col: dCol, row: dRow } = getColRow(id);
-          
-          for (const otherP of piecesRef.current) {
-            if (groupIds.includes(otherP.piece_id)) continue;
-            
-            const { col: oCol, row: oRow } = getColRow(otherP.piece_id);
-            const isAdjacent = Math.abs(dCol - oCol) + Math.abs(dRow - oRow) === 1;
-            if (!isAdjacent) continue;
-            
-            const expected_dx = (dCol - oCol) * PIECE_WIDTH;
-            const expected_dy = (dRow - oRow) * PIECE_HEIGHT;
-            
-            const target_x = otherP.current_x + expected_dx;
-            const target_y = otherP.current_y + expected_dy;
-            
-            const distance = Math.sqrt(
-              Math.pow(p.current_x - target_x, 2) + Math.pow(p.current_y - target_y, 2)
-            );
-            
-            if (distance < SNAP_DISTANCE) {
-              snappedToAdjacent = true;
-              dx = target_x - p.current_x;
-              dy = target_y - p.current_y;
-              if (otherP.is_snapped) isSnapped = true;
-              break;
-            }
+        
+        // Update other nodes in the group visually
+        if (p.piece_id !== draggedPieceId) {
+          const node = targetNode.getLayer()?.findOne(`#piece-${p.piece_id}`);
+          if (node) {
+            node.position({ x: p.current_x + deltaX, y: p.current_y + deltaY });
           }
         }
       }
+    }
 
-      const finalPieces: any[] = [];
-
-      for (const p of piecesRef.current) {
-        if (groupIds.includes(p.piece_id)) {
-          const finalX = p.current_x + dx;
-          const finalY = p.current_y + dy;
-          
-          if (isSnapped && !p.is_snapped) setBoardScore(s => s + 1);
-          
-          finalPieces.push({ 
-            piece_id: p.piece_id, 
-            current_x: finalX, 
-            current_y: finalY, 
-            locked_by: null, 
-            is_snapped: p.is_snapped || isSnapped 
-          });
-        }
-      }
-      
-      if (snappedToAdjacent) setConnectionScore(s => s + 1);
-
-      setPieces((prev) =>
-        prev.map((p) => {
-          const fp = finalPieces.find(f => f.piece_id === p.piece_id);
-          if (fp) {
-            return { ...p, current_x: fp.current_x, current_y: fp.current_y, locked_by: null, is_snapped: isSnapped };
-          }
-          return p;
-        })
-      );
-
+    const now = Date.now();
+    if (now - lastBroadcastRef.current > 33) {
       socket.emit('broadcast', {
         roomId: roomConfig.roomId,
-        event: 'piece-drop',
-        payload: { pieces: finalPieces },
+        event: 'cursor-pos',
+        payload: { pieces: updatedPieces, locked_by: userId },
       });
+      lastBroadcastRef.current = now;
+    }
+  };
 
-      socket.emit('upsert_pieces', {
-        roomId: roomConfig.roomId,
-        pieces: finalPieces.map(fp => ({
-          piece_id: fp.piece_id,
-          current_x: fp.current_x,
-          current_y: fp.current_y,
-          locked_by: null,
-          is_snapped: isSnapped,
-        }))
-      });
+  const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    const groupIds = draggingGroupRef.current;
+    if (groupIds.length === 0) return;
+
+    draggingGroupRef.current = [];
+
+    const targetNode = e.target;
+    const pieceIdStr = targetNode.id().replace('piece-', '');
+    const draggedPieceId = parseInt(pieceIdStr, 10);
+    
+    const firstPiece = piecesRef.current.find(p => p.piece_id === draggedPieceId);
+    if (!firstPiece || firstPiece.locked_by !== userId) return;
+
+    const newX = targetNode.x();
+    const newY = targetNode.y();
+    const deltaX = newX - firstPiece.current_x;
+    const deltaY = newY - firstPiece.current_y;
+
+    let dx = 0;
+    let dy = 0;
+    let isSnapped = false;
+    let snappedToAdjacent = false;
+
+    const { col, row } = getColRow(draggedPieceId);
+    const targetBoardX = col * PIECE_WIDTH;
+    const targetBoardY = row * PIECE_HEIGHT;
+
+    const distanceToBoard = Math.sqrt(
+      Math.pow(newX - targetBoardX, 2) + Math.pow(newY - targetBoardY, 2)
+    );
+
+    if (distanceToBoard < SNAP_DISTANCE) {
+      isSnapped = true;
+      dx = targetBoardX - newX;
+      dy = targetBoardY - newY;
+    } else {
+      // Check adjacent snaps
+      for (const id of groupIds) {
+        if (snappedToAdjacent) break;
+        
+        const p = piecesRef.current.find(p => p.piece_id === id);
+        if (!p) continue;
+        
+        const currentPx = p.current_x + deltaX;
+        const currentPy = p.current_y + deltaY;
+        
+        const { col: dCol, row: dRow } = getColRow(id);
+        
+        for (const otherP of piecesRef.current) {
+          if (groupIds.includes(otherP.piece_id)) continue;
+          
+          const { col: oCol, row: oRow } = getColRow(otherP.piece_id);
+          const isAdjacent = Math.abs(dCol - oCol) + Math.abs(dRow - oRow) === 1;
+          if (!isAdjacent) continue;
+          
+          const expected_dx = (dCol - oCol) * PIECE_WIDTH;
+          const expected_dy = (dRow - oRow) * PIECE_HEIGHT;
+          
+          const target_x = otherP.current_x + expected_dx;
+          const target_y = otherP.current_y + expected_dy;
+          
+          const distance = Math.sqrt(
+            Math.pow(currentPx - target_x, 2) + Math.pow(currentPy - target_y, 2)
+          );
+          
+          if (distance < SNAP_DISTANCE) {
+            snappedToAdjacent = true;
+            dx = target_x - currentPx;
+            dy = target_y - currentPy;
+            if (otherP.is_snapped) isSnapped = true;
+            break;
+          }
+        }
+      }
+    }
+
+    const finalPieces: any[] = [];
+
+    for (const p of piecesRef.current) {
+      if (groupIds.includes(p.piece_id)) {
+        const finalX = p.current_x + deltaX + dx;
+        const finalY = p.current_y + deltaY + dy;
+        
+        if (isSnapped && !p.is_snapped) setBoardScore(s => s + 1);
+        
+        finalPieces.push({ 
+          piece_id: p.piece_id, 
+          current_x: finalX, 
+          current_y: finalY, 
+          locked_by: null, 
+          is_snapped: p.is_snapped || isSnapped 
+        });
+      }
+    }
+    
+    if (snappedToAdjacent) setConnectionScore(s => s + 1);
+
+    setPieces((prev) =>
+      prev.map((p) => {
+        const fp = finalPieces.find(f => f.piece_id === p.piece_id);
+        if (fp) {
+          return { ...p, current_x: fp.current_x, current_y: fp.current_y, locked_by: null, is_snapped: isSnapped };
+        }
+        return p;
+      })
+    );
+
+    socket.emit('broadcast', {
+      roomId: roomConfig.roomId,
+      event: 'piece-drop',
+      payload: { pieces: finalPieces },
+    });
+
+    socket.emit('upsert_pieces', {
+      roomId: roomConfig.roomId,
+      pieces: finalPieces.map(fp => ({
+        piece_id: fp.piece_id,
+        current_x: fp.current_x,
+        current_y: fp.current_y,
+        locked_by: null,
+        is_snapped: isSnapped,
+      }))
+    });
+  };
+
+  const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault();
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const oldScale = stage.scaleX();
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+
+    const mousePointTo = {
+      x: (pointer.x - stage.x()) / oldScale,
+      y: (pointer.y - stage.y()) / oldScale,
     };
 
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerUp);
+    const zoomSensitivity = 0.002;
+    const newScale = Math.min(Math.max(0.1, oldScale - e.evt.deltaY * zoomSensitivity), 5);
 
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
+    const newPos = {
+      x: pointer.x - mousePointTo.x * newScale,
+      y: pointer.y - mousePointTo.y * newScale,
     };
-  }, [isDraggingPiece, roomConfig.roomId, userId, getColRow]);
+
+    stage.scaleX(newScale);
+    stage.scaleY(newScale);
+    stage.position(newPos);
+    stage.batchDraw();
+
+    stageScale.current = newScale;
+    stagePos.current = newPos;
+  };
 
   const completedCount = pieces.filter(p => p.is_snapped).length;
   const isCompleted = completedCount === GRID_COLS * GRID_ROWS && completedCount > 0;
@@ -508,7 +585,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   return (
     <div 
       ref={containerRef}
-      className="relative w-full h-screen bg-slate-900 overflow-hidden font-sans"
+      className="relative w-full h-screen bg-slate-900 overflow-hidden touch-none font-sans"
     >
       {/* Header */}
       <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-20 pointer-events-none">
@@ -578,129 +655,122 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         </div>
       )}
 
-      {/* SVG + DOM Workspace */}
-      <TransformWrapper
-        ref={transformComponentRef}
-        initialScale={1}
-        minScale={0.1}
-        maxScale={5}
-        centerOnInit={true}
-        panning={{ disabled: isDraggingPiece, excluded: ['puzzle-piece'] }}
-        wheel={{ step: 0.1 }}
-        doubleClick={{ disabled: true }}
+      {/* Konva Stage */}
+      <Stage
+        width={dimensions.width}
+        height={dimensions.height}
+        scaleX={stageScale.current}
+        scaleY={stageScale.current}
+        x={stagePos.current.x}
+        y={stagePos.current.y}
+        onWheel={handleWheel}
+        draggable
+        ref={stageRef}
       >
-        <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }}>
-          <div
-            style={{
-              width: BOARD_WIDTH,
-              height: BOARD_HEIGHT,
-              position: 'relative',
-            }}
-          >
-            {/* Board Outline */}
-            <div 
-              style={{ 
-                position: 'absolute', 
-                inset: 0, 
-                border: '2px dashed #334155',
-                pointerEvents: 'none'
-              }} 
+        <Layer>
+          {/* Board Outline */}
+          <Rect
+            x={0}
+            y={0}
+            width={BOARD_WIDTH}
+            height={BOARD_HEIGHT}
+            stroke="#334155"
+            strokeWidth={2}
+            dash={[10, 10]}
+          />
+          {image && (
+            <KonvaImage
+              image={image}
+              x={0}
+              y={0}
+              width={BOARD_WIDTH}
+              height={BOARD_HEIGHT}
+              opacity={0.1}
             />
+          )}
 
-            {/* Faded Background Image */}
-            <img 
-              src={IMAGE_URL} 
-              alt="Puzzle Reference"
-              style={{ 
-                position: 'absolute', 
-                inset: 0, 
-                width: '100%', 
-                height: '100%', 
-                opacity: 0.1, 
-                pointerEvents: 'none',
-                objectFit: 'fill'
-              }} 
-            />
+          {/* Pieces */}
+          {pieces.map((piece) => {
+            const { col, row } = getColRow(piece.piece_id);
+            const tabSize = Math.min(PIECE_WIDTH, PIECE_HEIGHT) * TAB_SIZE_RATIO;
+            const pathData = getPiecePath(col, row, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT);
 
-            {/* Pieces */}
-            {pieces.map((piece) => {
-              const { col, row } = getColRow(piece.piece_id);
-              const tabSize = Math.min(PIECE_WIDTH, PIECE_HEIGHT) * TAB_SIZE_RATIO;
-              const pathData = getPiecePath(col, row, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT);
+            const isLockedByOther = piece.locked_by && piece.locked_by !== userId;
+            const isDragging = piece.locked_by === userId;
 
-              const isLockedByOther = piece.locked_by && piece.locked_by !== userId;
-              const isDragging = piece.locked_by === userId;
-
-              return (
-                <div
-                  key={piece.piece_id}
-                  className={!piece.is_snapped ? 'puzzle-piece' : ''}
-                  onPointerDown={(e) => handlePointerDown(e, piece)}
-                  style={{
-                    position: 'absolute',
-                    left: piece.current_x,
-                    top: piece.current_y,
-                    width: PIECE_WIDTH,
-                    height: PIECE_HEIGHT,
-                    touchAction: 'none',
-                    zIndex: isDragging ? 100 : piece.is_snapped ? 10 : 20,
-                    cursor: piece.is_snapped ? 'default' : isLockedByOther ? 'not-allowed' : isDragging ? 'grabbing' : 'grab',
-                    opacity: isLockedByOther ? 0.5 : 1,
+            return (
+              <Group
+                key={piece.piece_id}
+                id={`piece-${piece.piece_id}`}
+                x={piece.current_x}
+                y={piece.current_y}
+                draggable={!piece.is_snapped && !isLockedByOther}
+                onDragStart={(e) => handleDragStart(e, piece)}
+                onDragMove={handleDragMove}
+                onDragEnd={handleDragEnd}
+              >
+                {/* Shadow */}
+                {!piece.is_snapped && (
+                  <Path
+                    data={pathData}
+                    x={-tabSize}
+                    y={-tabSize}
+                    fill="black"
+                    opacity={isDragging ? 0.4 : 0.2}
+                    shadowColor="black"
+                    shadowBlur={isDragging ? 20 : 10}
+                    shadowOffset={{ x: 0, y: isDragging ? 10 : 5 }}
+                    shadowOpacity={0.5}
+                  />
+                )}
+                
+                {/* Image clipped to path */}
+                <Group
+                  x={-tabSize}
+                  y={-tabSize}
+                  opacity={isLockedByOther ? 0.5 : 1}
+                  ref={(node) => {
+                    if (node && image && !node.isCached()) {
+                      // Cache the piece for performance and to isolate source-in blending
+                      node.cache({
+                        x: 0,
+                        y: 0,
+                        width: PIECE_WIDTH + tabSize * 2,
+                        height: PIECE_HEIGHT + tabSize * 2,
+                        pixelRatio: 2 // High quality
+                      });
+                    }
                   }}
                 >
-                  <svg
-                    style={{
-                      position: 'absolute',
-                      left: -tabSize,
-                      top: -tabSize,
-                      width: PIECE_WIDTH + tabSize * 2,
-                      height: PIECE_HEIGHT + tabSize * 2,
-                      overflow: 'visible',
-                      filter: isDragging ? 'drop-shadow(0px 10px 20px rgba(0,0,0,0.5))' : !piece.is_snapped ? 'drop-shadow(0px 5px 10px rgba(0,0,0,0.3))' : 'none',
-                    }}
-                  >
-                    <defs>
-                      <clipPath id={`clip-${piece.piece_id}`}>
-                        <path d={pathData} />
-                      </clipPath>
-                    </defs>
-                    
-                    {/* Shadow for un-snapped pieces (simulated with a black path) */}
-                    {!piece.is_snapped && (
-                      <path 
-                        d={pathData} 
-                        fill="black" 
-                        opacity={isDragging ? 0.4 : 0.2} 
-                        transform={`translate(0, ${isDragging ? 10 : 5})`}
-                      />
-                    )}
-
-                    {/* The clipped image */}
-                    <g clipPath={`url(#clip-${piece.piece_id})`}>
-                      <image
-                        href={IMAGE_URL}
-                        x={-col * PIECE_WIDTH + tabSize}
-                        y={-row * PIECE_HEIGHT + tabSize}
-                        width={BOARD_WIDTH}
-                        height={BOARD_HEIGHT}
-                        preserveAspectRatio="none"
-                      />
-                    </g>
-
-                    {/* Stroke outline */}
-                    <path
-                      d={pathData}
-                      stroke={isDragging ? "#3b82f6" : "#1e293b"}
-                      strokeWidth={isDragging ? 3 : 1}
-                      fill="none"
+                  <Path
+                    data={pathData}
+                    fill="white"
+                  />
+                  {image && (
+                    <KonvaImage
+                      image={image}
+                      x={-col * PIECE_WIDTH + tabSize}
+                      y={-row * PIECE_HEIGHT + tabSize}
+                      width={BOARD_WIDTH}
+                      height={BOARD_HEIGHT}
+                      globalCompositeOperation="source-in"
                     />
-                  </svg>
-                </div>
-              );
-            })}
-          </div>
-        </TransformComponent>
-      </TransformWrapper>
+                  )}
+                </Group>
+
+                {/* Stroke */}
+                <Path
+                  data={pathData}
+                  x={-tabSize}
+                  y={-tabSize}
+                  stroke={isDragging ? "#3b82f6" : "#1e293b"}
+                  strokeWidth={isDragging ? 3 : 1}
+                />
+              </Group>
+            );
+          })}
+        </Layer>
+      </Stage>
     </div>
   );
 }

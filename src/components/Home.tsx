@@ -24,6 +24,7 @@ interface RoomMetadata extends RoomConfig {
 
 interface HomeProps {
   existingRoom?: string;
+  existingPassword?: string;
   onEnter: (username: string, config?: RoomConfig) => void;
 }
 
@@ -36,7 +37,7 @@ const getBrowserTag = () => {
   return tag;
 };
 
-export default function Home({ existingRoom, onEnter }: HomeProps) {
+export default function Home({ existingRoom, existingPassword, onEnter }: HomeProps) {
   const [isConnecting, setIsConnecting] = useState(true);
   const [username, setUsername] = useState(() => {
     return localStorage.getItem('puzzle_username') || `익명#${getBrowserTag()}`;
@@ -55,9 +56,59 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
   const [isCalculating, setIsCalculating] = useState(false);
   const [activeRooms, setActiveRooms] = useState<RoomMetadata[]>([]);
   const [hasLoadedRooms, setHasLoadedRooms] = useState(false);
+  const autoJoinAttempted = React.useRef(false);
 
   const foundRoom = existingRoom ? activeRooms.find(r => r.roomId === existingRoom) : undefined;
   const isInvalidRoom = existingRoom && hasLoadedRooms && !foundRoom;
+
+  useEffect(() => {
+    if (hasLoadedRooms && existingRoom && !autoJoinAttempted.current) {
+      autoJoinAttempted.current = true;
+      const room = activeRooms.find(r => r.roomId === existingRoom);
+      
+      if (room) {
+        if (room.currentPlayers && room.maxPlayers && room.currentPlayers >= room.maxPlayers) {
+          alert('This room is full.');
+          return;
+        }
+
+        let joinPassword = existingPassword;
+        if (room.hasPassword && !joinPassword) {
+          const pwd = prompt('Enter room password:');
+          if (pwd === null) return;
+          joinPassword = pwd;
+        }
+
+        let finalUsername = username.trim();
+        if (!finalUsername.includes('#')) {
+          finalUsername = `${finalUsername}#${getBrowserTag()}`;
+          setUsername(finalUsername);
+          localStorage.setItem('puzzle_username', finalUsername);
+        }
+
+        socket.emit('join_room', { roomId: room.roomId, password: joinPassword }, (res: any) => {
+          if (res && res.success) {
+            onEnter(finalUsername, {
+              roomId: room.roomId,
+              imageUrl: room.imageUrl,
+              cols: room.cols,
+              rows: room.rows,
+              maxPlayers: room.maxPlayers,
+              password: joinPassword
+            });
+          } else {
+            alert(res?.message || 'Failed to join room');
+            window.history.pushState({}, '', window.location.pathname);
+            window.location.reload();
+          }
+        });
+      } else {
+        alert('방을 찾을 수 없습니다. 이미 삭제되었거나 존재하지 않는 방입니다.');
+        window.history.pushState({}, '', window.location.pathname);
+        window.location.reload();
+      }
+    }
+  }, [hasLoadedRooms, existingRoom, activeRooms, existingPassword, username, onEnter]);
 
   useEffect(() => {
     socket.on('connect', () => {

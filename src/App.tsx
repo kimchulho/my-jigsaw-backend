@@ -11,6 +11,7 @@ export default function App() {
   const [view, setView] = useState<'home' | 'puzzle'>('home');
   const [username, setUsername] = useState('Anonymous');
   const [existingRoomId, setExistingRoomId] = useState<string | undefined>(undefined);
+  const [existingPassword, setExistingPassword] = useState<string | undefined>(undefined);
   const [roomConfig, setRoomConfig] = useState<{
     roomId: string;
     imageUrl: string;
@@ -23,8 +24,10 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
+    const pwd = params.get('pwd');
     if (room) {
       setExistingRoomId(room);
+      if (pwd) setExistingPassword(pwd);
     }
   }, []);
 
@@ -33,6 +36,7 @@ export default function App() {
       {view === 'home' && (
         <Home 
           existingRoom={existingRoomId} 
+          existingPassword={existingPassword}
           onEnter={(name, config) => { 
             setUsername(name); 
             if (config) {

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -147,6 +147,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [score, setScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<{username: string, score: number}[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [playTime, setPlayTime] = useState(0);
   
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1024,6 +1025,17 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const handleCopyLink = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', roomConfig.roomId);
+    if (roomConfig.password) {
+      url.searchParams.set('pwd', roomConfig.password);
+    }
+    navigator.clipboard.writeText(url.toString());
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -1036,6 +1048,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           <p className="text-slate-400 text-sm mt-1">Drag pieces to the board. Syncs in real-time.</p>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto">
+          <button 
+            onClick={handleCopyLink}
+            className="flex items-center gap-2 bg-indigo-600/80 hover:bg-indigo-500 backdrop-blur-md px-4 py-2 rounded-full border border-indigo-500/50 text-white text-sm transition-colors"
+          >
+            {copiedLink ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
+            {copiedLink ? 'Copied!' : 'Invite Link'}
+          </button>
           {onBack && (
             <button 
               onClick={onBack}

@@ -26,6 +26,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-konva": "^19.2.3",
+    "react-zoom-pan-pinch": "^3.7.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "use-image": "^1.1.4",

@@ -1,0 +1,5 @@
+{
+  "name": "Remix: Multiplayer Jigsaw Puzzle",
+  "description": "A real-time multiplayer jigsaw puzzle using Supabase Realtime.",
+  "requestFramePermissions": []
+}

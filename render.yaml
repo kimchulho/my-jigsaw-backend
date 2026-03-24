@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: jigsaw-puzzle
+    env: docker
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: NODE_ENV
+        value: production

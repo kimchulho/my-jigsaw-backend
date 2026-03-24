@@ -66,6 +66,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   
+  const lastCenter = useRef<{x: number, y: number} | null>(null);
+  const lastDist = useRef<number>(0);
+
   const draggingGroupRef = useRef<number[]>([]);
   const lastBroadcastRef = useRef<number>(0);
   const piecesRef = useRef<PuzzlePiece[]>([]);
@@ -503,6 +506,62 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     });
   };
 
+  const handleTouchMove = (e: Konva.KonvaEventObject<TouchEvent>) => {
+    e.evt.preventDefault();
+    const touch1 = e.evt.touches[0];
+    const touch2 = e.evt.touches[1];
+
+    if (touch1 && touch2) {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      if (stage.isDragging()) {
+        stage.stopDrag();
+      }
+
+      const p1 = { x: touch1.clientX, y: touch1.clientY };
+      const p2 = { x: touch2.clientX, y: touch2.clientY };
+
+      const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+
+      if (!lastDist.current) {
+        lastDist.current = dist;
+      }
+
+      const center = {
+        x: (p1.x + p2.x) / 2,
+        y: (p1.y + p2.y) / 2,
+      };
+
+      if (!lastCenter.current) {
+        lastCenter.current = center;
+        return;
+      }
+
+      const scale = stage.scaleX() * (dist / lastDist.current);
+      const newScale = Math.min(Math.max(0.2, scale), 4);
+
+      const dx = center.x - lastCenter.current.x;
+      const dy = center.y - lastCenter.current.y;
+
+      const newPos = {
+        x: center.x - (center.x - stage.x()) * (newScale / stage.scaleX()) + dx,
+        y: center.y - (center.y - stage.y()) * (newScale / stage.scaleX()) + dy,
+      };
+
+      setStageScale(newScale);
+      setStagePos(newPos);
+
+      lastDist.current = dist;
+      lastCenter.current = center;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    lastDist.current = 0;
+    lastCenter.current = null;
+  };
+
   const completedCount = pieces.filter(p => p.is_snapped).length;
   const isCompleted = completedCount === GRID_COLS * GRID_ROWS && completedCount > 0;
 
@@ -626,6 +685,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         x={stagePos.x}
         y={stagePos.y}
         onWheel={handleWheel}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         draggable
         ref={stageRef}
       >

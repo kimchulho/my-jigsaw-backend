@@ -23,11 +23,11 @@ interface HomeProps {
 export default function Home({ existingRoom, onEnter }: HomeProps) {
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [isConnecting, setIsConnecting] = useState(true);
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(`익명_${Math.floor(Math.random() * 10000)}`);
   
   // Room creation state
   const [isCreating, setIsCreating] = useState(!existingRoom);
-  const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1506744626753-eba7bc3613ce?q=80&w=2000&auto=format&fit=crop');
+  const [imageUrl, setImageUrl] = useState('https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg');
   const [pieceCount, setPieceCount] = useState<number>(150);
   const [isCalculating, setIsCalculating] = useState(false);
   const [activeRooms, setActiveRooms] = useState<RoomMetadata[]>([]);

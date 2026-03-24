@@ -2,6 +2,7 @@ services:
   - type: web
     name: jigsaw-puzzle
     env: docker
+    plan: free
     envVars:
       - key: PORT
         value: "3000"

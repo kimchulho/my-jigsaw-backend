@@ -153,7 +153,7 @@ async function startServer() {
       socket.emit('rooms_list', rooms);
     });
 
-    socket.on('create_room', async (roomData: any) => {
+    socket.on('create_room', async (roomData: any, callback?: (res: any) => void) => {
       let useMemory = !supabase;
       if (supabase) {
         const { error } = await supabase.from('puzzle_rooms').insert({
@@ -192,6 +192,8 @@ async function startServer() {
       
       const rooms = await getRoomsFromDB(io);
       io.emit('rooms_list', rooms);
+      
+      if (callback) callback({ success: true });
     });
 
     socket.on('join_room', async (payload: any, callback?: (res: any) => void) => {

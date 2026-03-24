@@ -125,17 +125,17 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
         pieces: [] // Will be initialized by the first player joining
       };
 
-      socket.emit('create_room', roomData);
-      
-      onEnter(finalUsername, {
-        roomId,
-        imageUrl,
-        cols: finalCols,
-        rows: finalRows,
-        maxPlayers,
-        password: password.trim() || undefined
+      socket.emit('create_room', roomData, (res: any) => {
+        onEnter(finalUsername, {
+          roomId,
+          imageUrl,
+          cols: finalCols,
+          rows: finalRows,
+          maxPlayers,
+          password: password.trim() || undefined
+        });
+        setIsCalculating(false);
       });
-      setIsCalculating(false);
     };
     img.onerror = () => {
       alert('이미지를 불러올 수 없습니다. CORS를 지원하지 않는 이미지이거나 URL이 잘못되었습니다.');
@@ -169,13 +169,19 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
         joinPassword = pwd;
       }
 
-      onEnter(finalUsername, {
-        roomId: foundRoom.roomId,
-        imageUrl: foundRoom.imageUrl,
-        cols: foundRoom.cols,
-        rows: foundRoom.rows,
-        maxPlayers: foundRoom.maxPlayers,
-        password: joinPassword
+      socket.emit('join_room', { roomId: foundRoom.roomId, password: joinPassword }, (res: any) => {
+        if (res && res.success) {
+          onEnter(finalUsername, {
+            roomId: foundRoom.roomId,
+            imageUrl: foundRoom.imageUrl,
+            cols: foundRoom.cols,
+            rows: foundRoom.rows,
+            maxPlayers: foundRoom.maxPlayers,
+            password: joinPassword
+          });
+        } else {
+          alert(res?.message || 'Failed to join room');
+        }
       });
     } else {
       alert('방을 찾을 수 없습니다. 이미 삭제되었거나 존재하지 않는 방입니다.');
@@ -209,9 +215,15 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
       joinPassword = pwd;
     }
 
-    onEnter(finalUsername, {
-      ...room,
-      password: joinPassword
+    socket.emit('join_room', { roomId: room.roomId, password: joinPassword }, (res: any) => {
+      if (res && res.success) {
+        onEnter(finalUsername, {
+          ...room,
+          password: joinPassword
+        });
+      } else {
+        alert(res?.message || 'Failed to join room');
+      }
     });
   };
 
@@ -394,7 +406,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                       <img 
                         src={room.imageUrl} 
                         alt="Puzzle preview" 
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        className={`w-full h-full object-cover transition-transform duration-500 ${room.hasPassword ? 'blur-xl scale-125' : 'group-hover:scale-105'}`}
                         referrerPolicy="no-referrer"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent" />
@@ -488,7 +500,7 @@ export default function Home({ existingRoom, onEnter }: HomeProps) {
                         <img 
                           src={room.imageUrl} 
                           alt="Puzzle preview" 
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          className={`w-full h-full object-cover transition-transform duration-500 ${room.hasPassword ? 'blur-xl scale-125' : 'group-hover:scale-105'}`}
                           referrerPolicy="no-referrer"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent" />

@@ -165,8 +165,14 @@ export default function Home({ existingRoom, existingPassword, onEnter }: HomePr
       let finalRows = Math.max(2, rows);
       if (finalCols * finalRows > 1000) {
         const ratio = Math.sqrt(1000 / (finalCols * finalRows));
-        finalCols = Math.max(2, Math.round(finalCols * ratio));
-        finalRows = Math.max(2, Math.round(finalRows * ratio));
+        finalCols = Math.max(2, Math.floor(finalCols * ratio));
+        finalRows = Math.max(2, Math.floor(finalRows * ratio));
+        
+        // 최종 안전장치: 1000개 이하가 될 때까지 조각 수 감소
+        while (finalCols * finalRows > 1000) {
+          if (finalCols > finalRows) finalCols--;
+          else finalRows--;
+        }
       }
       
       const roomData = {

@@ -1198,6 +1198,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
   }, [isCompleted]);
 
+  useEffect(() => {
+    return () => {
+      if (joystickRef.current.loopId !== null) {
+        cancelAnimationFrame(joystickRef.current.loopId);
+      }
+    };
+  }, []);
+
   if (status === 'failed') {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-white">
@@ -1427,14 +1435,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     minimapDragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
-
-  useEffect(() => {
-    return () => {
-      if (joystickRef.current.loopId !== null) {
-        cancelAnimationFrame(joystickRef.current.loopId);
-      }
-    };
-  }, []);
 
   const updateJoystickPosition = (e: React.PointerEvent) => {
     if (!joystickBaseRef.current || !joystickStickRef.current) return;

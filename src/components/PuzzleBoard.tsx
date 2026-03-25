@@ -142,6 +142,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   
   const stageScale = useRef(1);
   const stagePos = useRef({ x: 0, y: 0 });
+  const isTouchRef = useRef(false);
+  const stickyDragRef = useRef<{ pieceId: number, offsetX: number, offsetY: number } | null>(null);
   
   const [playerCount, setPlayerCount] = useState(1);
   const [score, setScore] = useState(0);
@@ -174,7 +176,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       const children = cursorsLayer.getChildren();
       
       children.forEach((child) => {
-        const lastUpdate = child.getAttr('lastUpdate');
+        const lastUpdate = (child as any).getAttr('lastUpdate');
         if (lastUpdate && now - lastUpdate > 3000) {
           child.destroy();
         }
@@ -783,37 +785,29 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     };
   }, [userId, roomConfig.roomId, GRID_COLS, GRID_ROWS, getColRow]);
 
-  const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>, piece: PuzzlePiece) => {
-    const evt = e.evt as any;
-    if (evt && evt.touches && evt.touches.length > 1) {
-      e.target.stopDrag();
-      return;
-    }
-
+  const startDraggingGroup = (pieceId: number, stage: Konva.Stage) => {
+    const piece = piecesRef.current.find(p => p.piece_id === pieceId);
+    if (!piece) return;
     if (piece.is_snapped || (piece.locked_by && piece.locked_by !== userId)) {
-      e.target.stopDrag();
       return;
     }
 
     const groupIds = getConnectedGroup(piece.piece_id, piecesRef.current);
     draggingGroupRef.current = groupIds;
 
-    const stage = e.target.getStage();
-    if (stage) {
-      const myDragLayer = stage.findOne('#my-drag-layer') as any;
-      const idleLayer = stage.findOne('#idle-layer') as any;
-      
-      if (myDragLayer && idleLayer) {
-        groupIds.forEach(id => {
-          const node = stage.findOne(`#piece-${id}`);
-          if (node) {
-            node.moveTo(myDragLayer);
-            node.moveToTop();
-          }
-        });
-        myDragLayer.batchDraw();
-        idleLayer.batchDraw();
-      }
+    const myDragLayer = stage.findOne('#my-drag-layer') as any;
+    const idleLayer = stage.findOne('#idle-layer') as any;
+    
+    if (myDragLayer && idleLayer) {
+      groupIds.forEach(id => {
+        const node = stage.findOne(`#piece-${id}`);
+        if (node) {
+          node.moveTo(myDragLayer);
+          node.moveToTop();
+        }
+      });
+      myDragLayer.batchDraw();
+      idleLayer.batchDraw();
     }
 
     setPieces((prev) => prev.map(p => 
@@ -827,15 +821,42 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     });
   };
 
+  const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>, piece: PuzzlePiece) => {
+    const evt = e.evt as any;
+    if (evt && evt.touches && evt.touches.length > 1) {
+      e.target.stopDrag();
+      return;
+    }
+
+    const stage = e.target.getStage();
+    if (!stage) return;
+    
+    startDraggingGroup(piece.piece_id, stage);
+    if (draggingGroupRef.current.length === 0) {
+      e.target.stopDrag();
+    }
+  };
+
   const broadcastCursorPosition = useCallback((stage: Konva.Stage | null) => {
     if (!stage) return;
     const pos = stage.getPointerPosition();
     if (!pos) return;
 
-    const relativePos = {
+    let relativePos = {
       x: (pos.x - stage.x()) / stage.scaleX(),
       y: (pos.y - stage.y()) / stage.scaleY()
     };
+
+    if (isTouchRef.current && draggingGroupRef.current.length > 0) {
+      const primaryPieceId = draggingGroupRef.current[0];
+      const node = stage.findOne(`#piece-${primaryPieceId}`);
+      if (node) {
+        relativePos = {
+          x: node.x() + PIECE_WIDTH / 2,
+          y: node.y() + PIECE_HEIGHT / 2
+        };
+      }
+    }
 
     const now = Date.now();
     if (now - lastCursorBroadcastRef.current > 100) {
@@ -848,14 +869,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
   }, [roomConfig.roomId, userId, username, userColor]);
 
-  const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
+  const moveDraggingGroup = (targetNode: Konva.Node, draggedPieceId: number) => {
     const groupIds = draggingGroupRef.current;
     if (groupIds.length === 0) return;
 
-    const targetNode = e.target;
-    const pieceIdStr = targetNode.id().replace('piece-', '');
-    const draggedPieceId = parseInt(pieceIdStr, 10);
-    
     const draggedPiece = piecesRef.current.find(p => p.piece_id === draggedPieceId);
     if (!draggedPiece) return;
 
@@ -893,35 +910,35 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       });
       lastBroadcastRef.current = now;
     }
-
-    broadcastCursorPosition(e.target.getStage());
   };
 
-  const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
-    const groupIds = draggingGroupRef.current;
-    if (groupIds.length === 0) return;
-
-    const stage = e.target.getStage();
-    if (stage) {
-      const idleLayer = stage.findOne('#idle-layer') as any;
-      const myDragLayer = stage.findOne('#my-drag-layer') as any;
-      
-      if (idleLayer && myDragLayer) {
-        groupIds.forEach(id => {
-          const node = stage.findOne(`#piece-${id}`);
-          if (node) node.moveTo(idleLayer);
-        });
-        myDragLayer.batchDraw();
-        idleLayer.batchDraw();
-      }
-    }
-
-    draggingGroupRef.current = [];
-
+  const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
     const targetNode = e.target;
     const pieceIdStr = targetNode.id().replace('piece-', '');
     const draggedPieceId = parseInt(pieceIdStr, 10);
     
+    moveDraggingGroup(targetNode, draggedPieceId);
+    broadcastCursorPosition(e.target.getStage());
+  };
+
+  const stopDraggingGroup = (stage: Konva.Stage, targetNode: Konva.Node, draggedPieceId: number) => {
+    const groupIds = draggingGroupRef.current;
+    if (groupIds.length === 0) return;
+
+    const idleLayer = stage.findOne('#idle-layer') as any;
+    const myDragLayer = stage.findOne('#my-drag-layer') as any;
+    
+    if (idleLayer && myDragLayer) {
+      groupIds.forEach(id => {
+        const node = stage.findOne(`#piece-${id}`);
+        if (node) node.moveTo(idleLayer);
+      });
+      myDragLayer.batchDraw();
+      idleLayer.batchDraw();
+    }
+
+    draggingGroupRef.current = [];
+
     const firstPiece = piecesRef.current.find(p => p.piece_id === draggedPieceId);
     if (!firstPiece || firstPiece.locked_by !== userId) return;
 
@@ -929,6 +946,12 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const newY = targetNode.y();
     const deltaX = newX - firstPiece.current_x;
     const deltaY = newY - firstPiece.current_y;
+
+    if (Math.abs(deltaX) < 5 && Math.abs(deltaY) < 5) {
+      if (selectedPieceId === draggedPieceId) {
+        setSelectedPieceId(null);
+      }
+    }
 
     let dx = 0;
     let dy = 0;
@@ -1049,6 +1072,18 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         is_snapped: isSnapped,
       }))
     });
+  };
+
+  const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    const stage = e.target.getStage();
+    if (!stage) return;
+    
+    const targetNode = e.target;
+    const pieceIdStr = targetNode.id().replace('piece-', '');
+    const draggedPieceId = parseInt(pieceIdStr, 10);
+    
+    stopDraggingGroup(stage, targetNode, draggedPieceId);
+    stickyDragRef.current = null;
   };
 
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -1185,13 +1220,19 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       <Group
         key={piece.piece_id}
         id={`piece-${piece.piece_id}`}
+        name="piece-group"
         x={piece.current_x}
         y={piece.current_y}
         draggable={!piece.is_snapped && !isLockedByOther && (selectedPieceId === null || isSelected)}
         listening={!piece.is_snapped}
         onTap={(e) => {
           if (selectedPieceId !== null && selectedPieceId !== piece.piece_id) {
-            setSelectedPieceId(null);
+            if (!piece.is_snapped && !isLockedByOther) {
+              setSelectedPieceId(piece.piece_id);
+              e.currentTarget.moveToTop();
+            } else {
+              setSelectedPieceId(null);
+            }
             e.cancelBubble = true;
             return;
           }
@@ -1203,6 +1244,60 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             }
             e.cancelBubble = true;
           }
+        }}
+        onClick={(e) => {
+          if (isTouchRef.current) {
+            if (selectedPieceId !== null && selectedPieceId !== piece.piece_id) {
+              if (!piece.is_snapped && !isLockedByOther) {
+                setSelectedPieceId(piece.piece_id);
+                e.currentTarget.moveToTop();
+              } else {
+                setSelectedPieceId(null);
+              }
+              e.cancelBubble = true;
+              return;
+            }
+            if (!piece.is_snapped && !isLockedByOther) {
+              const willSelect = !isSelected;
+              setSelectedPieceId(willSelect ? piece.piece_id : null);
+              if (willSelect) {
+                e.currentTarget.moveToTop();
+              }
+              e.cancelBubble = true;
+            }
+            return;
+          }
+          
+          const stage = e.target.getStage();
+          if (!stage) return;
+          
+          if (stickyDragRef.current) {
+            const draggedPieceId = stickyDragRef.current.pieceId;
+            const targetNode = stage.findOne(`#piece-${draggedPieceId}`);
+            if (targetNode) {
+              stopDraggingGroup(stage, targetNode, draggedPieceId);
+            }
+            stickyDragRef.current = null;
+            setSelectedPieceId(null);
+          } else {
+            if (!piece.is_snapped && !isLockedByOther) {
+              const pos = stage.getPointerPosition();
+              if (pos) {
+                const relativePos = {
+                  x: (pos.x - stage.x()) / stage.scaleX(),
+                  y: (pos.y - stage.y()) / stage.scaleY()
+                };
+                stickyDragRef.current = {
+                  pieceId: piece.piece_id,
+                  offsetX: relativePos.x - piece.current_x,
+                  offsetY: relativePos.y - piece.current_y
+                };
+                startDraggingGroup(piece.piece_id, stage);
+                setSelectedPieceId(piece.piece_id);
+              }
+            }
+          }
+          e.cancelBubble = true;
         }}
         onDragStart={(e) => {
           handleDragStart(e, piece);
@@ -1219,8 +1314,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             shadowColor="#10b981"
             shadowBlur={10}
             shadowOpacity={0.8}
-            x={0}
-            y={0}
+            x={-tabSize}
+            y={-tabSize}
           />
         )}
         {pieceImage && (
@@ -1365,20 +1460,51 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         x={stagePos.current.x}
         y={stagePos.current.y}
         onWheel={handleWheel}
-        onMouseMove={(e) => broadcastCursorPosition(e.target.getStage())}
+        onMouseMove={(e) => {
+          const stage = e.target.getStage();
+          if (!stage) return;
+          
+          if (!isTouchRef.current && stickyDragRef.current) {
+            const pos = stage.getPointerPosition();
+            if (pos) {
+              const relativePos = {
+                x: (pos.x - stage.x()) / stage.scaleX(),
+                y: (pos.y - stage.y()) / stage.scaleY()
+              };
+              const { pieceId, offsetX, offsetY } = stickyDragRef.current;
+              const newX = relativePos.x - offsetX;
+              const newY = relativePos.y - offsetY;
+              
+              const targetNode = stage.findOne(`#piece-${pieceId}`);
+              if (targetNode) {
+                targetNode.position({ x: newX, y: newY });
+                moveDraggingGroup(targetNode, pieceId);
+              }
+            }
+          }
+          broadcastCursorPosition(stage);
+        }}
         draggable={selectedPieceId === null}
         onPointerDown={(e) => {
-          if (selectedPieceId !== null) {
-            const stage = stageRef.current;
-            if (!stage) return;
-            const node = stage.findOne(`#piece-${selectedPieceId}`);
-            if (node && !node.isDragging()) {
-              const evt = e.evt as any;
-              const pointerId = evt.pointerId !== undefined ? evt.pointerId : (evt.changedTouches ? evt.changedTouches[0].identifier : undefined);
-              if (pointerId !== undefined) {
-                node.startDrag(pointerId);
-              } else {
-                node.startDrag();
+          const evt = e.evt as any;
+          isTouchRef.current = evt.pointerType === 'touch' || evt.type.includes('touch');
+          
+          if (isTouchRef.current && selectedPieceId !== null) {
+            const isStage = e.target === e.target.getStage();
+            const isBackgroundImage = e.target.name() === 'board-background';
+            const isSelectedPiece = e.target.id() === `piece-${selectedPieceId}` || e.target.findAncestor(`#piece-${selectedPieceId}`);
+
+            if (isStage || isBackgroundImage || isSelectedPiece) {
+              const stage = stageRef.current;
+              if (!stage) return;
+              const node = stage.findOne(`#piece-${selectedPieceId}`);
+              if (node && !node.isDragging()) {
+                const pointerId = evt.pointerId !== undefined ? evt.pointerId : (evt.changedTouches ? evt.changedTouches[0].identifier : undefined);
+                if (pointerId !== undefined) {
+                  node.startDrag(pointerId);
+                } else {
+                  node.startDrag();
+                }
               }
             }
           }
@@ -1388,7 +1514,18 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             setSelectedPieceId(null);
           }
         }}
-        onClick={() => {
+        onClick={(e) => {
+          if (!isTouchRef.current && stickyDragRef.current) {
+            const stage = e.target.getStage();
+            if (stage) {
+              const draggedPieceId = stickyDragRef.current.pieceId;
+              const targetNode = stage.findOne(`#piece-${draggedPieceId}`);
+              if (targetNode) {
+                stopDraggingGroup(stage, targetNode, draggedPieceId);
+              }
+              stickyDragRef.current = null;
+            }
+          }
           if (selectedPieceId !== null) {
             setSelectedPieceId(null);
           }
@@ -1409,6 +1546,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         <Layer id="background-layer">
           {/* Board Outline */}
           <Rect
+            name="board-background"
             x={0}
             y={0}
             width={BOARD_WIDTH}
@@ -1420,6 +1558,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           />
           {image && showBoardBackground && (
             <KonvaImage
+              name="board-background"
               image={image}
               x={0}
               y={0}

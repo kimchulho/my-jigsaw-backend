@@ -376,6 +376,16 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     resetIdleTimer();
   };
 
+  const updateCursorsScale = useCallback((scale: number) => {
+    const layer = cursorsLayerRef.current;
+    if (!layer) return;
+    const invScale = 1 / scale;
+    layer.getChildren().forEach(child => {
+      child.scale({ x: invScale, y: invScale });
+    });
+    layer.batchDraw();
+  }, []);
+
   const fitViewToPieces = useCallback((piecesToFit: PuzzlePiece[]) => {
     if (!stageRef.current || piecesToFit.length === 0 || dimensions.width === 0) return false;
 
@@ -418,8 +428,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     stageScale.current = newScale;
     stagePos.current = newPos;
+    updateCursorsScale(newScale);
     return true;
-  }, [dimensions.width, dimensions.height, PIECE_WIDTH, PIECE_HEIGHT, BOARD_WIDTH, BOARD_HEIGHT]);
+  }, [dimensions.width, dimensions.height, PIECE_WIDTH, PIECE_HEIGHT, BOARD_WIDTH, BOARD_HEIGHT, updateCursorsScale]);
 
   useEffect(() => {
     if (pieces.length > 0 && !hasFittedView && dimensions.width > 0) {
@@ -698,10 +709,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
         let cursorGroup = cursorsLayer.findOne(`#cursor-${senderId}`) as Konva.Group;
         if (!cursorGroup) {
+          const invScale = 1 / stageScale.current;
           cursorGroup = new Konva.Group({
             id: `cursor-${senderId}`,
             x,
             y,
+            scaleX: invScale,
+            scaleY: invScale,
           });
 
           const path = new Konva.Path({
@@ -1061,6 +1075,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     stageScale.current = newScale;
     stagePos.current = newPos;
+    updateCursorsScale(newScale);
   };
 
   const handleManualZoom = (direction: 1 | -1) => {
@@ -1093,6 +1108,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     stageScale.current = newScale;
     stagePos.current = newPos;
+    updateCursorsScale(newScale);
   };
 
   const completedCount = pieces.filter(p => p.is_snapped).length;

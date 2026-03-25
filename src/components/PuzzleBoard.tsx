@@ -773,6 +773,27 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     });
   };
 
+  const broadcastCursorPosition = useCallback((stage: Konva.Stage | null) => {
+    if (!stage) return;
+    const pos = stage.getPointerPosition();
+    if (!pos) return;
+
+    const relativePos = {
+      x: (pos.x - stage.x()) / stage.scaleX(),
+      y: (pos.y - stage.y()) / stage.scaleY()
+    };
+
+    const now = Date.now();
+    if (now - lastCursorBroadcastRef.current > 100) {
+      socket.emit('broadcast', {
+        roomId: roomConfig.roomId,
+        event: 'mouse-move',
+        payload: { x: relativePos.x, y: relativePos.y, userId, name: username || 'Guest', color: userColor },
+      });
+      lastCursorBroadcastRef.current = now;
+    }
+  }, [roomConfig.roomId, userId, username, userColor]);
+
   const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
     const groupIds = draggingGroupRef.current;
     if (groupIds.length === 0) return;
@@ -818,6 +839,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       });
       lastBroadcastRef.current = now;
     }
+
+    broadcastCursorPosition(e.target.getStage());
   };
 
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
@@ -1253,32 +1276,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         x={stagePos.current.x}
         y={stagePos.current.y}
         onWheel={handleWheel}
-        onMouseMove={(e) => {
-          const stage = e.target.getStage();
-          if (!stage) return;
-          const pos = stage.getPointerPosition();
-          if (!pos) return;
-
-          const relativePos = {
-            x: (pos.x - stage.x()) / stage.scaleX(),
-            y: (pos.y - stage.y()) / stage.scaleY()
-          };
-
-          const now = Date.now();
-          if (now - lastCursorBroadcastRef.current > 100) {
-            socket.emit('broadcast', {
-              roomId: roomConfig.roomId,
-              event: 'mouse-move',
-              payload: { x: relativePos.x, y: relativePos.y, userId, name: username || 'Guest', color: userColor },
-            });
-            lastCursorBroadcastRef.current = now;
-          }
-        }}
+        onMouseMove={(e) => broadcastCursorPosition(e.target.getStage())}
         draggable
         ref={stageRef}
         onDragMove={(e) => {
           if (e.target === e.currentTarget) {
             stagePos.current = { x: e.target.x(), y: e.target.y() };
+            broadcastCursorPosition(e.target.getStage());
           }
         }}
         onDragEnd={(e) => {

@@ -932,6 +932,43 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     
     moveDraggingGroup(targetNode, draggedPieceId);
     broadcastCursorPosition(e.target.getStage());
+
+    // Auto-scroll when dragging near edge
+    const stage = e.target.getStage();
+    if (stage) {
+      const stagePosObj = stage.position();
+      const scale = stage.scaleX();
+      const screenX = targetNode.x() * scale + stagePosObj.x;
+      const screenY = targetNode.y() * scale + stagePosObj.y;
+      
+      const margin = 50; // Narrower margin
+      const scrollSpeed = 0.5; // Half speed
+      let cameraMoved = false;
+      let newStageX = stagePosObj.x;
+      let newStageY = stagePosObj.y;
+      
+      if (screenX < margin) {
+        newStageX += (margin - screenX) * scrollSpeed;
+        cameraMoved = true;
+      } else if (screenX > dimensions.width - margin) {
+        newStageX -= (screenX - (dimensions.width - margin)) * scrollSpeed;
+        cameraMoved = true;
+      }
+      
+      if (screenY < margin) {
+        newStageY += (margin - screenY) * scrollSpeed;
+        cameraMoved = true;
+      } else if (screenY > dimensions.height - margin) {
+        newStageY -= (screenY - (dimensions.height - margin)) * scrollSpeed;
+        cameraMoved = true;
+      }
+      
+      if (cameraMoved) {
+        stage.position({ x: newStageX, y: newStageY });
+        stagePos.current = { x: newStageX, y: newStageY };
+        stage.batchDraw();
+      }
+    }
   };
 
   const stopDraggingGroup = (stage: Konva.Stage, targetNode: Konva.Node, draggedPieceId: number) => {

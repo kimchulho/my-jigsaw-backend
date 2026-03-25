@@ -6,9 +6,10 @@
 import { useState, useEffect } from 'react';
 import PuzzleBoard from './components/PuzzleBoard';
 import Home from './components/Home';
+import BevelTest from './components/BevelTest';
 
 export default function App() {
-  const [view, setView] = useState<'home' | 'puzzle'>('home');
+  const [view, setView] = useState<'home' | 'puzzle' | 'test'>('home');
   const [username, setUsername] = useState('Anonymous');
   const [existingRoomId, setExistingRoomId] = useState<string | undefined>(undefined);
   const [existingPassword, setExistingPassword] = useState<string | undefined>(undefined);
@@ -33,6 +34,9 @@ export default function App() {
 
   return (
     <>
+      {view === 'test' && (
+        <BevelTest />
+      )}
       {view === 'home' && (
         <Home 
           existingRoom={existingRoomId} 

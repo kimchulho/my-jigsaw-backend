@@ -160,6 +160,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const otherDragLayerRef = useRef<Konva.Layer>(null);
   
   const draggingGroupRef = useRef<number[]>([]);
+  const minimapDragRef = useRef<{ startX: number, startY: number, lastX: number, lastY: number, isDragging: boolean } | null>(null);
 
   const cursorsLayerRef = useRef<Konva.Layer>(null);
   const lastCursorBroadcastRef = useRef<number>(0);
@@ -1370,6 +1371,60 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
   };
 
+  const handleMinimapPointerDown = (e: React.PointerEvent) => {
+    minimapDragRef.current = { 
+      startX: e.clientX, 
+      startY: e.clientY, 
+      lastX: e.clientX, 
+      lastY: e.clientY, 
+      isDragging: false 
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleMinimapPointerMove = (e: React.PointerEvent) => {
+    if (!minimapDragRef.current) return;
+    
+    const dx = e.clientX - minimapDragRef.current.lastX;
+    const dy = e.clientY - minimapDragRef.current.lastY;
+    
+    const totalDx = e.clientX - minimapDragRef.current.startX;
+    const totalDy = e.clientY - minimapDragRef.current.startY;
+    
+    if (!minimapDragRef.current.isDragging && (Math.abs(totalDx) > 5 || Math.abs(totalDy) > 5)) {
+      minimapDragRef.current.isDragging = true;
+    }
+    
+    if (minimapDragRef.current.isDragging) {
+      const multiplier = 2.5; // Adjust speed for touchpad feel
+      
+      if (stageRef.current) {
+        const stage = stageRef.current;
+        const newPos = {
+          x: stage.x() + dx * multiplier,
+          y: stage.y() + dy * multiplier
+        };
+        stage.position(newPos);
+        stage.batchDraw();
+        stagePos.current = newPos;
+      }
+    }
+    
+    minimapDragRef.current.lastX = e.clientX;
+    minimapDragRef.current.lastY = e.clientY;
+  };
+
+  const handleMinimapPointerUp = (e: React.PointerEvent) => {
+    if (!minimapDragRef.current) return;
+    
+    if (!minimapDragRef.current.isDragging) {
+      setShowLargePreview(true);
+    }
+    
+    minimapDragRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -1656,16 +1711,19 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         <div className="absolute bottom-6 left-6 z-20 flex flex-col gap-2">
           <div className="bg-slate-800/80 backdrop-blur-md p-2 rounded-xl border border-slate-700 shadow-lg pointer-events-auto">
             <div 
-              className="relative group cursor-pointer" 
-              onClick={() => setShowLargePreview(true)}
-              title="View Original Image"
+              className="relative group cursor-pointer touch-none" 
+              onPointerDown={handleMinimapPointerDown}
+              onPointerMove={handleMinimapPointerMove}
+              onPointerUp={handleMinimapPointerUp}
+              onPointerCancel={handleMinimapPointerUp}
+              title="Drag to pan, tap to view original"
             >
               <img 
                 src={roomConfig.imageUrl} 
                 alt="Puzzle Preview" 
-                className="w-32 h-auto rounded-lg opacity-80 group-hover:opacity-100 transition-opacity"
+                className="w-32 h-auto rounded-lg opacity-80 group-hover:opacity-100 transition-opacity pointer-events-none"
               />
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 rounded-lg">
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 rounded-lg pointer-events-none">
                 <Maximize2 className="w-6 h-6 text-white" />
               </div>
             </div>

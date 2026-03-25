@@ -291,8 +291,19 @@ export default function Home({ existingRoom, existingPassword, onEnter }: HomePr
     });
   };
 
-  const inProgressRooms = activeRooms.filter(r => r.snappedCount === undefined || r.totalPieces === undefined || r.snappedCount < r.totalPieces);
-  const completedRooms = activeRooms.filter(r => r.snappedCount !== undefined && r.totalPieces !== undefined && r.snappedCount >= r.totalPieces);
+  const inProgressRooms = activeRooms
+    .filter(r => r.snappedCount === undefined || r.totalPieces === undefined || r.snappedCount < r.totalPieces)
+    .sort((a, b) => {
+      const aPlayers = a.currentPlayers || 0;
+      const bPlayers = b.currentPlayers || 0;
+      if (aPlayers !== bPlayers) {
+        return bPlayers - aPlayers;
+      }
+      return b.createdAt - a.createdAt;
+    });
+  const completedRooms = activeRooms
+    .filter(r => r.snappedCount !== undefined && r.totalPieces !== undefined && r.snappedCount >= r.totalPieces)
+    .sort((a, b) => b.createdAt - a.createdAt);
 
   const formatTime = (seconds: number) => {
     if (!seconds) return '00:00';

@@ -116,6 +116,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
   const [userId] = useState(() => uuidv4());
   const [isReady, setIsReady] = useState(false);
+  const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
   const [imagesReady, setImagesReady] = useState(false);
   const [pieceImages, setPieceImages] = useState<Record<string, HTMLCanvasElement>>({});
   const [bgColor, setBgColor] = useState('bg-slate-900');
@@ -1018,6 +1019,10 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       });
     }
 
+    if (isSnapped || snappedToAdjacent) {
+      setSelectedPieceId(null);
+    }
+
     setPieces((prev) =>
       prev.map((p) => {
         const fp = finalPieces.find(f => f.piece_id === p.piece_id);
@@ -1174,14 +1179,31 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const isDragging = piece.locked_by === userId;
     const pieceImage = pieceImages[`${col}-${row}`];
 
+    const isSelected = selectedPieceId === piece.piece_id;
+
     return (
       <Group
         key={piece.piece_id}
         id={`piece-${piece.piece_id}`}
         x={piece.current_x}
         y={piece.current_y}
-        draggable={!piece.is_snapped && !isLockedByOther}
+        draggable={!piece.is_snapped && !isLockedByOther && (selectedPieceId === null || isSelected)}
         listening={!piece.is_snapped}
+        onTap={(e) => {
+          if (selectedPieceId !== null && selectedPieceId !== piece.piece_id) {
+            setSelectedPieceId(null);
+            e.cancelBubble = true;
+            return;
+          }
+          if (!piece.is_snapped && !isLockedByOther) {
+            const willSelect = !isSelected;
+            setSelectedPieceId(willSelect ? piece.piece_id : null);
+            if (willSelect) {
+              e.currentTarget.moveToTop();
+            }
+            e.cancelBubble = true;
+          }
+        }}
         onDragStart={(e) => {
           handleDragStart(e, piece);
         }}
@@ -1189,6 +1211,18 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         onDragEnd={handleDragEnd}
         opacity={isLockedByOther ? 0.5 : 1}
       >
+        {isSelected && (
+          <Path
+            data={pathData}
+            stroke="#10b981"
+            strokeWidth={4}
+            shadowColor="#10b981"
+            shadowBlur={10}
+            shadowOpacity={0.8}
+            x={0}
+            y={0}
+          />
+        )}
         {pieceImage && (
           <KonvaImage
             image={pieceImage}
@@ -1332,7 +1366,33 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         y={stagePos.current.y}
         onWheel={handleWheel}
         onMouseMove={(e) => broadcastCursorPosition(e.target.getStage())}
-        draggable
+        draggable={selectedPieceId === null}
+        onPointerDown={(e) => {
+          if (selectedPieceId !== null) {
+            const stage = stageRef.current;
+            if (!stage) return;
+            const node = stage.findOne(`#piece-${selectedPieceId}`);
+            if (node && !node.isDragging()) {
+              const evt = e.evt as any;
+              const pointerId = evt.pointerId !== undefined ? evt.pointerId : (evt.changedTouches ? evt.changedTouches[0].identifier : undefined);
+              if (pointerId !== undefined) {
+                node.startDrag(pointerId);
+              } else {
+                node.startDrag();
+              }
+            }
+          }
+        }}
+        onTap={() => {
+          if (selectedPieceId !== null) {
+            setSelectedPieceId(null);
+          }
+        }}
+        onClick={() => {
+          if (selectedPieceId !== null) {
+            setSelectedPieceId(null);
+          }
+        }}
         ref={stageRef}
         onDragMove={(e) => {
           if (e.target === e.currentTarget) {

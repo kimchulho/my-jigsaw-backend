@@ -161,10 +161,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   
   const draggingGroupRef = useRef<number[]>([]);
   const minimapDragRef = useRef<{ startX: number, startY: number, lastX: number, lastY: number, isDragging: boolean } | null>(null);
-  const joystickRef = useRef<{ x: number, y: number, active: boolean, loopId: number | null }>({ x: 0, y: 0, active: false, loopId: null });
-  const joystickBaseRef = useRef<HTMLDivElement>(null);
-  const joystickStickRef = useRef<HTMLDivElement>(null);
-
   const cursorsLayerRef = useRef<Konva.Layer>(null);
   const lastCursorBroadcastRef = useRef<number>(0);
   const [userColor] = useState(() => {
@@ -1254,9 +1250,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
   useEffect(() => {
     return () => {
-      if (joystickRef.current.loopId !== null) {
-        cancelAnimationFrame(joystickRef.current.loopId);
-      }
     };
   }, []);
 
@@ -1472,133 +1465,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     
     minimapDragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
-  };
-
-  const updateJoystickPosition = (e: React.PointerEvent) => {
-    if (!joystickBaseRef.current || !joystickStickRef.current) return;
-    const rect = joystickBaseRef.current.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    const maxRadius = rect.width / 2;
-    
-    let dx = e.clientX - centerX;
-    let dy = e.clientY - centerY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    
-    if (distance > maxRadius) {
-      dx = (dx / distance) * maxRadius;
-      dy = (dy / distance) * maxRadius;
-    }
-    
-    joystickStickRef.current.style.transform = `translate(${dx}px, ${dy}px)`;
-    joystickRef.current.x = dx / maxRadius;
-    joystickRef.current.y = dy / maxRadius;
-  };
-
-  const handleJoystickPointerDown = (e: React.PointerEvent) => {
-    if (!joystickBaseRef.current) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    joystickRef.current.active = true;
-    updateJoystickPosition(e);
-    
-    if (joystickRef.current.loopId === null) {
-      let lastTime = performance.now();
-      
-      if (selectedPieceId !== null && stageRef.current) {
-        const isDragging = draggingGroupRef.current.includes(selectedPieceId);
-        if (!isDragging) {
-          startDraggingGroup(selectedPieceId, stageRef.current);
-        }
-      }
-
-      const loop = (time: number) => {
-        const dt = time - lastTime;
-        lastTime = time;
-        
-        const { x, y, active } = joystickRef.current;
-        if (!active) {
-          joystickRef.current.loopId = null;
-          return;
-        }
-        
-        if (selectedPieceId !== null && stageRef.current) {
-          const stage = stageRef.current;
-          const node = stage.findOne(`#piece-${selectedPieceId}`);
-          if (node) {
-            const speed = 0.5; // pixels per ms
-            const dx = x * speed * dt;
-            const dy = y * speed * dt;
-            
-            const newX = node.x() + dx;
-            const newY = node.y() + dy;
-            
-            node.position({ x: newX, y: newY });
-            moveDraggingGroup(node, selectedPieceId);
-            
-            const stagePosObj = stage.position();
-            const scale = stage.scaleX();
-            const screenX = newX * scale + stagePosObj.x;
-            const screenY = newY * scale + stagePosObj.y;
-            
-            const margin = 100;
-            let cameraMoved = false;
-            let newStageX = stagePosObj.x;
-            let newStageY = stagePosObj.y;
-            
-            if (screenX < margin) {
-              newStageX += (margin - screenX);
-              cameraMoved = true;
-            } else if (screenX > dimensions.width - margin) {
-              newStageX -= (screenX - (dimensions.width - margin));
-              cameraMoved = true;
-            }
-            
-            if (screenY < margin) {
-              newStageY += (margin - screenY);
-              cameraMoved = true;
-            } else if (screenY > dimensions.height - margin) {
-              newStageY -= (screenY - (dimensions.height - margin));
-              cameraMoved = true;
-            }
-            
-            if (cameraMoved) {
-              stage.position({ x: newStageX, y: newStageY });
-              stagePos.current = { x: newStageX, y: newStageY };
-            }
-            
-            stage.batchDraw();
-            broadcastCursorPosition(stage);
-          }
-        }
-        
-        joystickRef.current.loopId = requestAnimationFrame(loop);
-      };
-      
-      joystickRef.current.loopId = requestAnimationFrame(loop);
-    }
-  };
-
-  const handleJoystickPointerMove = (e: React.PointerEvent) => {
-    if (!joystickRef.current.active) return;
-    updateJoystickPosition(e);
-  };
-
-  const handleJoystickPointerUp = (e: React.PointerEvent) => {
-    joystickRef.current.active = false;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    
-    if (joystickStickRef.current) {
-      joystickStickRef.current.style.transform = `translate(0px, 0px)`;
-    }
-    joystickRef.current.x = 0;
-    joystickRef.current.y = 0;
-    
-    if (selectedPieceId !== null && stageRef.current) {
-      const node = stageRef.current.findOne(`#piece-${selectedPieceId}`);
-      if (node) {
-        stopDraggingGroup(stageRef.current, node, selectedPieceId);
-      }
-    }
   };
 
   return (
@@ -1827,21 +1693,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         <Layer id="my-drag-layer" ref={myDragLayerRef} />
         <Layer id="cursors-layer" ref={cursorsLayerRef} />
       </Stage>
-
-      {/* Joystick */}
-      <div 
-        className={`absolute bottom-6 right-24 z-20 w-32 h-32 bg-slate-800/50 backdrop-blur-md rounded-full border border-slate-700 shadow-lg touch-none flex items-center justify-center transition-opacity duration-300 ${selectedPieceId !== null ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}
-        ref={joystickBaseRef}
-        onPointerDown={handleJoystickPointerDown}
-        onPointerMove={handleJoystickPointerMove}
-        onPointerUp={handleJoystickPointerUp}
-        onPointerCancel={handleJoystickPointerUp}
-      >
-        <div 
-          ref={joystickStickRef}
-          className="w-12 h-12 bg-slate-400/80 rounded-full shadow-md pointer-events-none"
-        />
-      </div>
 
       {/* Manual Zoom & Settings Controls */}
       <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-20">

@@ -1094,6 +1094,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     
     if (isSnapped || snappedToAdjacent) {
       newScore += 1;
+      if (navigator.vibrate) {
+        navigator.vibrate(50);
+      }
     }
 
     if (newScore !== score) {

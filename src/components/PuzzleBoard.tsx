@@ -196,6 +196,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   }, [isReady, imagesReady]);
   const lastBroadcastRef = useRef<number>(0);
   const piecesRef = useRef<PuzzlePiece[]>([]);
+  const activeTweensRef = useRef<Record<string, Konva.Tween>>({});
 
   useEffect(() => {
     const handleDisconnect = () => setIsDisconnected(true);
@@ -548,19 +549,57 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           // 2 & 3: Interpolation and Direct Canvas Manipulation
           const stage = stageRef.current;
           if (stage) {
-            updatedPieces.forEach((up: any) => {
+            // Cancel existing tween for this user
+            if (activeTweensRef.current[locked_by]) {
+              activeTweensRef.current[locked_by].destroy();
+              delete activeTweensRef.current[locked_by];
+            }
+
+            const animData = updatedPieces.map((up: any) => {
               const node = stage.findOne(`#piece-${up.piece_id}`);
-              if (node) {
-                // Animate smoothly to the new position
-                node.to({
-                  x: up.current_x,
-                  y: up.current_y,
-                  duration: 0.1, // 100ms tween
-                  easing: Konva.Easings.Linear,
-                });
-              }
-              
-              // Silently update the ref so future React renders don't snap it back
+              return {
+                node,
+                piece_id: up.piece_id,
+                startX: node ? node.x() : up.current_x,
+                startY: node ? node.y() : up.current_y,
+                endX: up.current_x,
+                endY: up.current_y,
+              };
+            });
+
+            const leader = animData.find(data => data.node);
+            if (leader && leader.node) {
+              const tween = new Konva.Tween({
+                node: leader.node,
+                duration: 0.1,
+                x: leader.endX,
+                y: leader.endY,
+                easing: Konva.Easings.Linear,
+                onUpdate: () => {
+                  const currentX = leader.node.x();
+                  const currentY = leader.node.y();
+                  const deltaX = currentX - leader.startX;
+                  const deltaY = currentY - leader.startY;
+                  
+                  // Apply EXACT SAME delta to all other pieces in the group
+                  for (let i = 0; i < animData.length; i++) {
+                    const data = animData[i];
+                    if (data !== leader && data.node) {
+                      data.node.x(data.startX + deltaX);
+                      data.node.y(data.startY + deltaY);
+                    }
+                  }
+                },
+                onFinish: () => {
+                  delete activeTweensRef.current[locked_by];
+                }
+              });
+              activeTweensRef.current[locked_by] = tween;
+              tween.play();
+            }
+
+            // Silently update the ref so future React renders don't snap it back
+            updatedPieces.forEach((up: any) => {
               const piece = piecesRef.current.find(p => p.piece_id === up.piece_id);
               if (piece) {
                 piece.current_x = up.current_x;

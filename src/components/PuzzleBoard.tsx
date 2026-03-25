@@ -844,6 +844,23 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const stage = e.target.getStage();
     if (!stage) return;
     
+    // If sticky drag is active, and we touched a different piece,
+    // stop dragging the touched piece and start dragging the selected one.
+    if (stickyDragRef.current && stickyDragRef.current.pieceId !== piece.piece_id) {
+      e.target.stopDrag();
+      
+      const selectedPieceNode = stage.findOne(`#piece-${stickyDragRef.current.pieceId}`);
+      if (selectedPieceNode) {
+        const pointerId = evt.pointerId !== undefined ? evt.pointerId : (evt.changedTouches ? evt.changedTouches[0].identifier : undefined);
+        if (pointerId !== undefined) {
+          (selectedPieceNode as any).startDrag(pointerId);
+        } else {
+          (selectedPieceNode as any).startDrag();
+        }
+      }
+      return;
+    }
+    
     startDraggingGroup(piece.piece_id, stage);
     if (draggingGroupRef.current.length === 0) {
       e.target.stopDrag();
@@ -942,24 +959,24 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       const screenY = targetNode.y() * scale + stagePosObj.y;
       
       const margin = 50; // Narrower margin
-      const scrollSpeed = 0.5; // Half speed
+      const scrollSpeed = 5; // Constant speed, no acceleration
       let cameraMoved = false;
       let newStageX = stagePosObj.x;
       let newStageY = stagePosObj.y;
       
       if (screenX < margin) {
-        newStageX += (margin - screenX) * scrollSpeed;
+        newStageX += scrollSpeed;
         cameraMoved = true;
       } else if (screenX > dimensions.width - margin) {
-        newStageX -= (screenX - (dimensions.width - margin)) * scrollSpeed;
+        newStageX -= scrollSpeed;
         cameraMoved = true;
       }
       
       if (screenY < margin) {
-        newStageY += (margin - screenY) * scrollSpeed;
+        newStageY += scrollSpeed;
         cameraMoved = true;
       } else if (screenY > dimensions.height - margin) {
-        newStageY -= (screenY - (dimensions.height - margin)) * scrollSpeed;
+        newStageY -= scrollSpeed;
         cameraMoved = true;
       }
       

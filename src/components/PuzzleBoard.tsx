@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut, Palette, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check, WifiOff } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize, Minimize, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check, WifiOff } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
@@ -152,6 +152,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [copiedLink, setCopiedLink] = useState(false);
   const [playTime, setPlayTime] = useState(0);
   const [isDisconnected, setIsDisconnected] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -166,6 +167,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
     return colors[Math.floor(Math.random() * colors.length)];
   });
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1349,6 +1358,18 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.error(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -1619,6 +1640,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           aria-label="Zoom Out"
         >
           <ZoomOut size={24} />
+        </button>
+        <button
+          onClick={toggleFullscreen}
+          className="bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-300 shadow-lg transition-colors"
+          aria-label={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+          title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+        >
+          {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
         </button>
       </div>
 

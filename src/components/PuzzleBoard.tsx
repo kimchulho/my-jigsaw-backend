@@ -1301,16 +1301,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         draggable={!piece.is_snapped && !isLockedByOther && (selectedPieceId === null || isSelected)}
         listening={!piece.is_snapped}
         onTap={(e) => {
-          if (selectedPieceId !== null && selectedPieceId !== piece.piece_id) {
-            if (!piece.is_snapped && !isLockedByOther) {
-              setSelectedPieceId(piece.piece_id);
-              e.currentTarget.moveToTop();
-            } else {
-              setSelectedPieceId(null);
-            }
-            e.cancelBubble = true;
-            return;
-          }
+          if (selectedPieceId !== null) return;
+          
           if (!piece.is_snapped && !isLockedByOther) {
             const willSelect = !isSelected;
             setSelectedPieceId(willSelect ? piece.piece_id : null);
@@ -1322,16 +1314,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         }}
         onClick={(e) => {
           if (isTouchRef.current) {
-            if (selectedPieceId !== null && selectedPieceId !== piece.piece_id) {
-              if (!piece.is_snapped && !isLockedByOther) {
-                setSelectedPieceId(piece.piece_id);
-                e.currentTarget.moveToTop();
-              } else {
-                setSelectedPieceId(null);
-              }
-              e.cancelBubble = true;
-              return;
-            }
+            if (selectedPieceId !== null) return;
+            
             if (!piece.is_snapped && !isLockedByOther) {
               const willSelect = !isSelected;
               setSelectedPieceId(willSelect ? piece.piece_id : null);
@@ -1758,21 +1742,15 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           isTouchRef.current = evt.pointerType === 'touch' || evt.type.includes('touch');
           
           if (isTouchRef.current && selectedPieceId !== null) {
-            const isStage = e.target === e.target.getStage();
-            const isBackgroundImage = e.target.name() === 'board-background';
-            const isSelectedPiece = e.target.id() === `piece-${selectedPieceId}` || e.target.findAncestor(`#piece-${selectedPieceId}`);
-
-            if (isStage || isBackgroundImage || isSelectedPiece) {
-              const stage = stageRef.current;
-              if (!stage) return;
-              const node = stage.findOne(`#piece-${selectedPieceId}`);
-              if (node && !node.isDragging()) {
-                const pointerId = evt.pointerId !== undefined ? evt.pointerId : (evt.changedTouches ? evt.changedTouches[0].identifier : undefined);
-                if (pointerId !== undefined) {
-                  node.startDrag(pointerId);
-                } else {
-                  node.startDrag();
-                }
+            const stage = stageRef.current;
+            if (!stage) return;
+            const node = stage.findOne(`#piece-${selectedPieceId}`);
+            if (node && !node.isDragging()) {
+              const pointerId = evt.pointerId !== undefined ? evt.pointerId : (evt.changedTouches ? evt.changedTouches[0].identifier : undefined);
+              if (pointerId !== undefined) {
+                node.startDrag(pointerId);
+              } else {
+                node.startDrag();
               }
             }
           }

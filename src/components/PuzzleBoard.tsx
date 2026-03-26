@@ -1365,7 +1365,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
                 bot.lastMoveEmit = now;
                 socket.emit('broadcast', {
                   roomId: roomConfig.roomId,
-                  event: 'piece-move',
+                  event: 'cursor-pos',
                   payload: { pieces: [{ piece_id: piece.piece_id, current_x: piece.current_x, current_y: piece.current_y }], locked_by: bot.id }
                 });
               }

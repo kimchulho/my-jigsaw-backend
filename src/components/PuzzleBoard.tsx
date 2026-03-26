@@ -3,12 +3,66 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, ZoomIn, ZoomOut, Palette, Maximize, Minimize, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check, WifiOff } from 'lucide-react';
+import { Loader2, ZoomIn, ZoomOut, Palette, Maximize, Minimize, Maximize2, X, Image as ImageIcon, Clock, Trophy, Users, Link as LinkIcon, Check, WifiOff, Bot } from 'lucide-react';
 import { getPiecePath, TAB_SIZE_RATIO } from '../utils/puzzleShapes';
 import confetti from 'canvas-confetti';
 import { Stage, Layer, Group, Path, Image as KonvaImage, Rect } from 'react-konva';
 import useImage from 'use-image';
 import Konva from 'konva';
+
+const PlayTimeDisplay = () => {
+  const [playTime, setPlayTime] = useState(0);
+
+  useEffect(() => {
+    const handleRoomState = (room: any) => {
+      if (room.playTime !== undefined) {
+        setPlayTime(room.playTime);
+      }
+    };
+    
+    socket.on('room_state', handleRoomState);
+    socket.on('play_time_update', setPlayTime);
+
+    return () => {
+      socket.off('room_state', handleRoomState);
+      socket.off('play_time_update', setPlayTime);
+    };
+  }, []);
+
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  return <span className="text-white font-medium font-mono">{formatTime(playTime)}</span>;
+};
+
+const CachedGroup = ({ piece, isSelected, children, ...props }: any) => {
+  const groupRef = useRef<Konva.Group>(null);
+  useEffect(() => {
+    if (groupRef.current && !piece.is_snapped) {
+      // Clear cache first to force redraw before caching again
+      groupRef.current.clearCache();
+      
+      // Add padding to cache to prevent shadow clipping
+      const tabSize = Math.min(100, 100) * 0.2; // Approximate tab size
+      const padding = 20; // Enough for shadowBlur=10
+      
+      groupRef.current.cache({
+        x: -tabSize - padding,
+        y: -tabSize - padding,
+        width: 100 + tabSize * 2 + padding * 2,
+        height: 100 + tabSize * 2 + padding * 2,
+      });
+    } else if (groupRef.current) {
+      groupRef.current.clearCache();
+    }
+  }, [piece.is_snapped, isSelected]);
+  return <Group ref={groupRef} {...props}>{children}</Group>;
+};
 
 const SNAP_DISTANCE = 30;
 
@@ -113,17 +167,42 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }));
   }, [BOARD_WIDTH, BOARD_HEIGHT, PIECE_WIDTH, PIECE_HEIGHT]);
 
-  const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
+  const piecesRef = useRef<PuzzlePiece[]>([]);
   const [userId] = useState(() => uuidv4());
   const [isReady, setIsReady] = useState(false);
   const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
   const [imagesReady, setImagesReady] = useState(false);
   const [pieceImages, setPieceImages] = useState<Record<string, HTMLCanvasElement>>({});
+  const pieceColorsRef = useRef<Record<number, string>>({});
   const [bgColor, setBgColor] = useState('bg-slate-900');
   const [showLargePreview, setShowLargePreview] = useState(false);
   const [hasFittedView, setHasFittedView] = useState(false);
   const [isIdleDisconnected, setIsIdleDisconnected] = useState(false);
   
+  const [isBotRunning, setIsBotRunning] = useState(false);
+  const [botMode, setBotMode] = useState<'EDGE' | 'COLOR'>('EDGE');
+  const botRef = useRef({
+    active: false,
+    id: 'bot-' + Math.random().toString(36).substr(2, 9),
+    name: 'Bot',
+    color: '#ff00ff',
+    x: -100,
+    y: -100,
+    state: 'IDLE',
+    targetPieceId: null as number | null,
+    targetX: 0,
+    targetY: 0,
+    startX: 0,
+    startY: 0,
+    controlX: 0,
+    controlY: 0,
+    moveStartTime: 0,
+    moveDuration: 0,
+    lastUpdate: 0,
+    lastMoveEmit: 0,
+    lastMouseEmit: 0
+  });
+
   const idleTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
@@ -150,7 +229,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   const [leaderboard, setLeaderboard] = useState<{username: string, score: number}[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [playTime, setPlayTime] = useState(0);
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   
@@ -207,7 +285,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     }
   }, [isReady, imagesReady]);
   const lastBroadcastRef = useRef<number>(0);
-  const piecesRef = useRef<PuzzlePiece[]>([]);
   const activeTweensRef = useRef<Record<string, Konva.Tween>>({});
 
   useEffect(() => {
@@ -256,10 +333,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     return Array.from(group);
   };
 
-  useEffect(() => {
-    piecesRef.current = pieces;
-  }, [pieces]);
-
   // Pre-crop images for performance
   useEffect(() => {
     if (!image) return;
@@ -294,6 +367,61 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
           ctx.stroke(path);
 
+          // Calculate average color for the bot
+          try {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            let r = 0, g = 0, b = 0, count = 0;
+            // Sample every 4th pixel for performance
+            for (let i = 0; i < data.length; i += 16) {
+              if (data[i + 3] > 128) { // if not transparent
+                r += data[i];
+                g += data[i + 1];
+                b += data[i + 2];
+                count++;
+              }
+            }
+            if (count > 0) {
+              r = Math.floor(r / count);
+              g = Math.floor(g / count);
+              b = Math.floor(b / count);
+              
+              // Convert RGB to HSL
+              r /= 255; g /= 255; b /= 255;
+              const max = Math.max(r, g, b), min = Math.min(r, g, b);
+              let h = 0, s = 0, l = (max + min) / 2;
+
+              if (max !== min) {
+                const d = max - min;
+                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                switch (max) {
+                  case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                  case g: h = (b - r) / d + 2; break;
+                  case b: h = (r - g) / d + 4; break;
+                }
+                h /= 6;
+              }
+
+              let colorGroup = 'gray';
+              if (l < 0.2) colorGroup = 'black';
+              else if (l > 0.8) colorGroup = 'white';
+              else if (s < 0.2) colorGroup = 'gray';
+              else {
+                h = h * 360;
+                if (h < 30 || h >= 330) colorGroup = 'red';
+                else if (h < 90) colorGroup = 'yellow';
+                else if (h < 150) colorGroup = 'green';
+                else if (h < 210) colorGroup = 'cyan';
+                else if (h < 270) colorGroup = 'blue';
+                else if (h < 330) colorGroup = 'magenta';
+              }
+              const pieceId = row * GRID_COLS + col;
+              pieceColorsRef.current[pieceId] = colorGroup;
+            }
+          } catch (e) {
+            // Ignore cross-origin errors if any
+          }
+
           images[`${col}-${row}`] = canvas;
         }
       }
@@ -302,6 +430,16 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     };
 
     generateImages();
+
+    // Cleanup function to free canvas memory
+    return () => {
+      Object.values(pieceImages).forEach(canvas => {
+        canvas.width = 0;
+        canvas.height = 0;
+      });
+      setPieceImages({});
+      setImagesReady(false);
+    };
   }, [image, GRID_COLS, GRID_ROWS, PIECE_WIDTH, PIECE_HEIGHT, BOARD_WIDTH, BOARD_HEIGHT, getPiecePath]);
 
   // Center the camera on mount
@@ -445,14 +583,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   }, [dimensions.width, dimensions.height, PIECE_WIDTH, PIECE_HEIGHT, BOARD_WIDTH, BOARD_HEIGHT, updateCursorsScale]);
 
   useEffect(() => {
-    if (pieces.length > 0 && !hasFittedView && dimensions.width > 0) {
+    if (isReady && imagesReady && piecesRef.current.length > 0 && !hasFittedView && dimensions.width > 0) {
       // Small delay to ensure Konva stage is fully rendered
       setTimeout(() => {
-        const success = fitViewToPieces(pieces);
+        const success = fitViewToPieces(piecesRef.current);
         if (success) setHasFittedView(true);
       }, 100);
     }
-  }, [pieces, hasFittedView, dimensions.width, fitViewToPieces]);
+  }, [hasFittedView, dimensions.width, fitViewToPieces, isReady, imagesReady]);
 
   // Initialize pieces from DB
   useEffect(() => {
@@ -470,29 +608,36 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const handlePiecesState = (data: any[]) => {
       if (data && data.length > 0) {
         if (data.length === GRID_COLS * GRID_ROWS) {
-          setPieces(prevPieces => {
-            const processedData = data.map(p => {
-              const { col, row } = getColRow(p.piece_id);
-              const targetX = col * PIECE_WIDTH;
-              const targetY = row * PIECE_HEIGHT;
-              const is_snapped = Math.abs(p.current_x - targetX) < 1 && Math.abs(p.current_y - targetY) < 1;
-              
-              // Prevent rubber-banding: preserve real-time positions of locked pieces
-              const existingPiece = prevPieces.find(prev => prev.piece_id === p.piece_id);
-              if (existingPiece && existingPiece.locked_by) {
-                return { 
-                  ...p, 
-                  is_snapped,
-                  current_x: existingPiece.current_x, 
-                  current_y: existingPiece.current_y,
-                  locked_by: existingPiece.locked_by 
-                };
-              }
-              
-              return { ...p, is_snapped };
-            });
-            return processedData;
+          const processedData = data.map(p => {
+            const { col, row } = getColRow(p.piece_id);
+            const targetX = col * PIECE_WIDTH;
+            const targetY = row * PIECE_HEIGHT;
+            const is_snapped = Math.abs(p.current_x - targetX) < 1 && Math.abs(p.current_y - targetY) < 1;
+            
+            const existingPiece = piecesRef.current.find(prev => prev.piece_id === p.piece_id);
+            
+            const node = stageRef.current?.findOne(`#piece-${p.piece_id}`);
+            if (node) {
+              node.position({
+                x: existingPiece && existingPiece.locked_by ? existingPiece.current_x : p.current_x,
+                y: existingPiece && existingPiece.locked_by ? existingPiece.current_y : p.current_y
+              });
+            }
+
+            if (existingPiece && existingPiece.locked_by) {
+              return { 
+                ...p, 
+                is_snapped,
+                current_x: existingPiece.current_x, 
+                current_y: existingPiece.current_y,
+                locked_by: existingPiece.locked_by 
+              };
+            }
+            
+            return { ...p, is_snapped };
           });
+          piecesRef.current = processedData;
+          stageRef.current?.batchDraw();
         } else {
           if (data.length > 0) {
             const extraIds = data.map(p => p.piece_id);
@@ -521,16 +666,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         });
       }
       socket.emit('upsert_pieces', { roomId: roomConfig.roomId, pieces: initialPieces });
-      setPieces(initialPieces);
+      piecesRef.current = initialPieces;
     };
 
-    const handleRoomState = (room: any) => {
-      if (room.playTime !== undefined) {
-        setPlayTime(room.playTime);
-      }
-    };
-
-    socket.on('room_state', handleRoomState);
     socket.on('pieces_state', handlePiecesState);
     socket.emit('get_pieces', roomConfig.roomId);
 
@@ -550,7 +688,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     socket.emit('get_all_scores', roomConfig.roomId);
 
     return () => {
-      socket.off('room_state', handleRoomState);
       socket.off('pieces_state', handlePiecesState);
       socket.off('score_state', handleScoreState);
       socket.off('all_scores', handleAllScores);
@@ -560,6 +697,15 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   // Realtime subscription
   useEffect(() => {
     const handleBroadcast = (payload: any) => {
+      // Ignore events generated by our own local bot to prevent stuttering
+      if (botRef.current.active && payload.payload) {
+        const botId = botRef.current.id;
+        const p = payload.payload;
+        if (p.userId === botId || p.locked_by === botId || p.snapped_by === botId) {
+          return;
+        }
+      }
+
       if (payload.event === 'cursor-pos') {
         const { pieces: updatedPieces, locked_by } = payload.payload;
         if (locked_by !== userId) {
@@ -660,9 +806,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               idleLayer.batchDraw();
             }
           }
-          setPieces((prev) => prev.map(p => 
+          piecesRef.current = piecesRef.current.map(p => 
             piece_ids.includes(p.piece_id) ? { ...p, locked_by } : p
-          ));
+          );
         }
       } else if (payload.event === 'piece-drop') {
         const { pieces: droppedPieces } = payload.payload;
@@ -673,24 +819,33 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           if (idleLayer && otherDragLayer) {
             droppedPieces.forEach((dp: any) => {
               const node = stage.findOne(`#piece-${dp.piece_id}`);
-              if (node) node.moveTo(idleLayer);
+              if (node) {
+                node.moveTo(idleLayer);
+                node.position({ x: dp.current_x, y: dp.current_y });
+              }
             });
             otherDragLayer.batchDraw();
             idleLayer.batchDraw();
           }
         }
-        setPieces((prev) => {
-          const newPieces = [...prev];
-          for (const dp of droppedPieces) {
-            const idx = newPieces.findIndex(p => p.piece_id === dp.piece_id);
-            if (idx !== -1) {
-              newPieces[idx] = { ...newPieces[idx], current_x: dp.current_x, current_y: dp.current_y, locked_by: dp.locked_by, is_snapped: dp.is_snapped };
-            }
+        for (const dp of droppedPieces) {
+          const piece = piecesRef.current.find(p => p.piece_id === dp.piece_id);
+          if (piece) {
+            Object.assign(piece, { current_x: dp.current_x, current_y: dp.current_y, locked_by: dp.locked_by, is_snapped: dp.is_snapped });
           }
-          return newPieces;
-        });
+        }
       } else if (payload.event === 'board-reset') {
-        setPieces(payload.payload.pieces);
+        piecesRef.current = payload.payload.pieces;
+        const stage = stageRef.current;
+        if (stage) {
+          payload.payload.pieces.forEach((p: PuzzlePiece) => {
+            const node = stage.findOne(`#piece-${p.piece_id}`);
+            if (node) {
+              node.position({ x: p.current_x, y: p.current_y });
+            }
+          });
+          stage.batchDraw();
+        }
       } else if (payload.event === 'request-sync') {
         const { from } = payload.payload;
         if (from !== userId && piecesRef.current.length === GRID_COLS * GRID_ROWS) {
@@ -710,7 +865,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             const is_snapped = Math.abs(p.current_x - targetX) < 1 && Math.abs(p.current_y - targetY) < 1;
             return { ...p, is_snapped };
           });
-          setPieces(processed);
+          piecesRef.current = processed;
+          stageRef.current?.batchDraw();
         }
       } else if (payload.event === 'mouse-move') {
         const { x, y, userId: senderId, name, color } = payload.payload;
@@ -778,7 +934,6 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
 
     socket.on('broadcast', handleBroadcast);
     socket.on('player_count', setPlayerCount);
-    socket.on('play_time_update', setPlayTime);
 
     socket.emit('broadcast', {
       roomId: roomConfig.roomId,
@@ -789,10 +944,508 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     return () => {
       socket.off('broadcast', handleBroadcast);
       socket.off('player_count', setPlayerCount);
-      socket.off('play_time_update', setPlayTime);
       socket.emit('leave_room', roomConfig.roomId);
     };
   }, [userId, roomConfig.roomId, GRID_COLS, GRID_ROWS, getColRow]);
+
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const getColorZone = (pieceId: number) => {
+      const colorGroup = pieceColorsRef.current[pieceId] || 'gray';
+      const zoneW = BOARD_WIDTH / 1.5;
+      const zoneH = BOARD_HEIGHT / 1.5;
+      const margin = 150;
+      const colorZones: Record<string, { x: number, y: number, w: number, h: number }> = {
+        'red': { x: -zoneW - margin, y: -zoneH - margin, w: zoneW, h: zoneH },
+        'yellow': { x: BOARD_WIDTH / 2 - zoneW / 2, y: -zoneH - margin, w: zoneW, h: zoneH },
+        'green': { x: BOARD_WIDTH + margin, y: -zoneH - margin, w: zoneW, h: zoneH },
+        'cyan': { x: BOARD_WIDTH + margin, y: BOARD_HEIGHT / 2 - zoneH / 2, w: zoneW, h: zoneH },
+        'blue': { x: BOARD_WIDTH + margin, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
+        'magenta': { x: BOARD_WIDTH / 2 - zoneW / 2, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
+        'white': { x: -zoneW - margin, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
+        'gray': { x: -zoneW - margin, y: BOARD_HEIGHT / 2 - zoneH / 2, w: zoneW, h: zoneH },
+        'black': { x: BOARD_WIDTH / 2 - zoneW / 2, y: BOARD_HEIGHT + margin + zoneH + 50, w: zoneW, h: zoneH },
+      };
+      return colorZones[colorGroup] || colorZones['gray'];
+    };
+
+    const botTick = () => {
+      const bot = botRef.current;
+      if (!bot.active) return;
+
+      const now = Date.now();
+      const dt = now - bot.lastUpdate;
+      bot.lastUpdate = now;
+
+      const stage = stageRef.current;
+      if (!stage) {
+        animationFrameId = requestAnimationFrame(botTick);
+        return;
+      }
+
+      const isPieceGrouped = (piece: PuzzlePiece) => {
+        const { col: pCol, row: pRow } = getColRow(piece.piece_id);
+        for (const other of piecesRef.current) {
+          if (other.piece_id === piece.piece_id) continue;
+          const { col: oCol, row: oRow } = getColRow(other.piece_id);
+          const isAdjacent = Math.abs(pCol - oCol) + Math.abs(pRow - oRow) === 1;
+          if (isAdjacent) {
+            const expected_dx = (oCol - pCol) * PIECE_WIDTH;
+            const expected_dy = (oRow - pRow) * PIECE_HEIGHT;
+            const actual_dx = other.current_x - piece.current_x;
+            const actual_dy = other.current_y - piece.current_y;
+            if (Math.abs(expected_dx - actual_dx) < 1 && Math.abs(expected_dy - actual_dy) < 1) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+
+      const setupBotMove = (targetX: number, targetY: number, state: string) => {
+        bot.targetX = targetX;
+        bot.targetY = targetY;
+        bot.state = state;
+        bot.startX = bot.x;
+        bot.startY = bot.y;
+        bot.moveStartTime = now;
+        
+        const dx = targetX - bot.x;
+        const dy = targetY - bot.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        
+        // Human-like duration: base time + time per pixel
+        const speedMultiplier = state === 'DRAGGING_PIECE' ? 1.5 : 1.0;
+        bot.moveDuration = 400 + dist * speedMultiplier;
+        
+        const midX = (bot.x + targetX) / 2;
+        const midY = (bot.y + targetY) / 2;
+        const nx = -dy / dist;
+        const ny = dx / dist;
+        // Random wobble between -0.2 and 0.2 of distance
+        const wobble = (Math.random() - 0.5) * 0.4 * dist;
+        bot.controlX = midX + nx * wobble;
+        bot.controlY = midY + ny * wobble;
+      };
+
+      if (bot.state === 'IDLE') {
+        // Find pieces based on botMode
+        const targetPieces = piecesRef.current.filter(p => {
+          if (p.is_snapped || p.locked_by) return false;
+          if (isPieceGrouped(p)) return false;
+          
+          if (botMode === 'EDGE') {
+            const { col, row } = getColRow(p.piece_id);
+            const isEdge = col === 0 || col === GRID_COLS - 1 || row === 0 || row === GRID_ROWS - 1;
+            if (!isEdge) return false;
+            
+            // Check if inside board
+            const isInside = p.current_x >= 0 && p.current_x <= BOARD_WIDTH - PIECE_WIDTH && 
+                             p.current_y >= 0 && p.current_y <= BOARD_HEIGHT - PIECE_HEIGHT;
+            
+            return !isInside;
+          } else {
+            // COLOR mode
+            const zone = getColorZone(p.piece_id);
+            
+            const isInZone = p.current_x >= zone.x && p.current_x <= zone.x + zone.w &&
+                             p.current_y >= zone.y && p.current_y <= zone.y + zone.h;
+            
+            if (isInZone) {
+              // Check if overlapping with another piece
+              const isOverlapping = piecesRef.current.some(other => {
+                if (other.piece_id === p.piece_id) return false;
+                const dx = p.current_x - other.current_x;
+                const dy = p.current_y - other.current_y;
+                return dx * dx + dy * dy < (PIECE_WIDTH * 1.6) * (PIECE_WIDTH * 1.6);
+              });
+              return isOverlapping;
+            }
+            return true;
+          }
+        });
+
+        if (targetPieces.length > 0) {
+          // Initial position if just started
+          if (bot.x === -100) {
+            bot.x = BOARD_WIDTH / 2;
+            bot.y = BOARD_HEIGHT / 2;
+          }
+
+          // Pick a random piece to "look" at while searching
+          const randomPiece = targetPieces[Math.floor(Math.random() * targetPieces.length)];
+          
+          // Set up a slow drift towards the general area of the pieces
+          const driftX = randomPiece.current_x + PIECE_WIDTH / 2 + (Math.random() - 0.5) * 300;
+          const driftY = randomPiece.current_y + PIECE_HEIGHT / 2 + (Math.random() - 0.5) * 300;
+          
+          setupBotMove(driftX, driftY, 'SEARCHING');
+          
+          // Override duration to simulate search time (1.5s to 3.5s)
+          bot.moveDuration = 1500 + Math.random() * 2000;
+        } else {
+          // No more pieces to move
+          bot.active = false;
+          setIsBotRunning(false);
+          
+          // Hide cursor
+          const cursorsLayer = cursorsLayerRef.current;
+          if (cursorsLayer) {
+            const cursorGroup = cursorsLayer.findOne(`#cursor-${bot.id}`);
+            if (cursorGroup) {
+              cursorGroup.destroy();
+              cursorsLayer.batchDraw();
+            }
+          }
+          return;
+        }
+      } else if (bot.state === 'SEARCHING') {
+        const elapsed = now - bot.moveStartTime;
+        let progress = elapsed / bot.moveDuration;
+
+        if (progress >= 1) {
+          progress = 1;
+          bot.x = bot.targetX;
+          bot.y = bot.targetY;
+          
+          // Done searching, now actually pick a piece and move to it
+          const targetPieces = piecesRef.current.filter(p => {
+            if (p.is_snapped || p.locked_by) return false;
+            if (isPieceGrouped(p)) return false;
+            
+            if (botMode === 'EDGE') {
+              const { col, row } = getColRow(p.piece_id);
+              const isEdge = col === 0 || col === GRID_COLS - 1 || row === 0 || row === GRID_ROWS - 1;
+              if (!isEdge) return false;
+              
+              const isInside = p.current_x >= 0 && p.current_x <= BOARD_WIDTH - PIECE_WIDTH && 
+                               p.current_y >= 0 && p.current_y <= BOARD_HEIGHT - PIECE_HEIGHT;
+              
+              return !isInside;
+            } else {
+              const zone = getColorZone(p.piece_id);
+              
+              const isInZone = p.current_x >= zone.x && p.current_x <= zone.x + zone.w &&
+                               p.current_y >= zone.y && p.current_y <= zone.y + zone.h;
+              
+              if (isInZone) {
+                const isOverlapping = piecesRef.current.some(other => {
+                  if (other.piece_id === p.piece_id) return false;
+                  const dx = p.current_x - other.current_x;
+                  const dy = p.current_y - other.current_y;
+                  return dx * dx + dy * dy < (PIECE_WIDTH * 1.6) * (PIECE_WIDTH * 1.6);
+                });
+                return isOverlapping;
+              }
+              return true;
+            }
+          });
+
+          if (targetPieces.length > 0) {
+            const piece = targetPieces[Math.floor(Math.random() * targetPieces.length)];
+            bot.targetPieceId = piece.piece_id;
+            setupBotMove(piece.current_x + PIECE_WIDTH / 2, piece.current_y + PIECE_HEIGHT / 2, 'MOVING_TO_PIECE');
+          } else {
+            bot.state = 'IDLE'; // Re-evaluate
+          }
+        } else {
+          // Easing for searching (slow drift)
+          // We can use easeOutQuad so it slows down as it searches
+          const ease = 1 - (1 - progress) * (1 - progress);
+          const t = ease;
+          const mt = 1 - t;
+          
+          bot.x = mt * mt * bot.startX + 2 * mt * t * bot.controlX + t * t * bot.targetX;
+          bot.y = mt * mt * bot.startY + 2 * mt * t * bot.controlY + t * t * bot.targetY;
+        }
+      } else if (bot.state === 'MOVING_TO_PIECE' || bot.state === 'DRAGGING_PIECE') {
+        const elapsed = now - bot.moveStartTime;
+        let progress = elapsed / bot.moveDuration;
+
+        if (progress >= 1) {
+          progress = 1;
+          bot.x = bot.targetX;
+          bot.y = bot.targetY;
+          
+          if (bot.state === 'MOVING_TO_PIECE') {
+            // Reached piece, lock it
+            const piece = piecesRef.current.find(p => p.piece_id === bot.targetPieceId);
+            if (piece && !piece.locked_by && !piece.is_snapped && !isPieceGrouped(piece)) {
+              // Lock piece
+              piece.locked_by = bot.id;
+              
+              const node = stage.findOne(`#piece-${piece.piece_id}`);
+              const otherDragLayer = stage.findOne('#other-drag-layer') as any;
+              const idleLayer = stage.findOne('#idle-layer') as any;
+              if (node && otherDragLayer && idleLayer) {
+                node.moveTo(otherDragLayer);
+                otherDragLayer.batchDraw();
+                idleLayer.batchDraw();
+              }
+
+              // Emit lock event
+              socket.emit('broadcast', {
+                roomId: roomConfig.roomId,
+                event: 'piece-lock',
+                payload: { piece_ids: [piece.piece_id], locked_by: bot.id }
+              });
+
+              let targetPos = { x: 0, y: 0 };
+
+              if (botMode === 'EDGE') {
+                // Determine target inside board
+                const { col, row } = getColRow(piece.piece_id);
+                
+                // We want to place them inside the board, near their respective edges
+                let minX = 0;
+                let maxX = Math.max(0, BOARD_WIDTH - PIECE_WIDTH);
+                let minY = 0;
+                let maxY = Math.max(0, BOARD_HEIGHT - PIECE_HEIGHT);
+                
+                if (row === 0) {
+                  // Top edge
+                  maxY = Math.min(maxY, PIECE_HEIGHT * 3);
+                } else if (row === GRID_ROWS - 1) {
+                  // Bottom edge
+                  minY = Math.max(0, maxY - PIECE_HEIGHT * 3);
+                } else if (col === 0) {
+                  // Left edge
+                  maxX = Math.min(maxX, PIECE_WIDTH * 3);
+                } else if (col === GRID_COLS - 1) {
+                  // Right edge
+                  minX = Math.max(0, maxX - PIECE_WIDTH * 3);
+                }
+                
+                const checkOverlap = (x: number, y: number) => {
+                  return piecesRef.current.some(p => {
+                    if (p.piece_id === piece.piece_id) return false;
+                    const dx = x - p.current_x;
+                    const dy = y - p.current_y;
+                    return dx * dx + dy * dy < (PIECE_WIDTH * 1.6) * (PIECE_WIDTH * 1.6);
+                  });
+                };
+
+                let found = false;
+                const stepX = PIECE_WIDTH * 1.6;
+                const stepY = PIECE_HEIGHT * 1.6;
+                const cols = Math.max(1, Math.floor((maxX - minX) / stepX));
+                const rows = Math.max(1, Math.floor((maxY - minY) / stepY));
+                
+                for (let r = 0; r < rows; r++) {
+                  for (let c = 0; c < cols; c++) {
+                    const testX = minX + c * stepX;
+                    const testY = minY + r * stepY;
+                    if (!checkOverlap(testX, testY)) {
+                      targetPos = { x: testX, y: testY };
+                      found = true;
+                      break;
+                    }
+                  }
+                  if (found) break;
+                }
+                
+                if (!found) {
+                  targetPos = {
+                    x: minX + Math.random() * (maxX - minX),
+                    y: minY + Math.random() * (maxY - minY)
+                  };
+                }
+              } else {
+                // COLOR mode
+                const zone = getColorZone(piece.piece_id);
+                
+                const checkOverlap = (x: number, y: number) => {
+                  return piecesRef.current.some(p => {
+                    if (p.piece_id === piece.piece_id) return false;
+                    const dx = x - p.current_x;
+                    const dy = y - p.current_y;
+                    return dx * dx + dy * dy < (PIECE_WIDTH * 1.6) * (PIECE_WIDTH * 1.6);
+                  });
+                };
+
+                let found = false;
+                const stepX = PIECE_WIDTH * 1.6;
+                const stepY = PIECE_HEIGHT * 1.6;
+                const cols = Math.floor(zone.w / stepX);
+                const rows = Math.floor(zone.h / stepY);
+                
+                for (let r = 0; r < rows; r++) {
+                  for (let c = 0; c < cols; c++) {
+                    const testX = zone.x + c * stepX;
+                    const testY = zone.y + r * stepY;
+                    if (!checkOverlap(testX, testY)) {
+                      targetPos = { x: testX, y: testY };
+                      found = true;
+                      break;
+                    }
+                  }
+                  if (found) break;
+                }
+                
+                if (!found) {
+                  // Fallback to random if grid is full
+                  targetPos = {
+                    x: zone.x + Math.random() * (zone.w - PIECE_WIDTH),
+                    y: zone.y + Math.random() * (zone.h - PIECE_HEIGHT)
+                  };
+                }
+              }
+
+              setupBotMove(targetPos.x + PIECE_WIDTH / 2, targetPos.y + PIECE_HEIGHT / 2, 'DRAGGING_PIECE');
+            } else {
+              // Piece was taken or snapped, abort
+              bot.state = 'IDLE';
+            }
+          } else if (bot.state === 'DRAGGING_PIECE') {
+            // Drop piece
+            const piece = piecesRef.current.find(p => p.piece_id === bot.targetPieceId);
+            if (piece && piece.locked_by === bot.id) {
+              piece.locked_by = null;
+              piece.current_x = bot.x - PIECE_WIDTH / 2;
+              piece.current_y = bot.y - PIECE_HEIGHT / 2;
+
+              const node = stage.findOne(`#piece-${piece.piece_id}`);
+              const otherDragLayer = stage.findOne('#other-drag-layer') as any;
+              const idleLayer = stage.findOne('#idle-layer') as any;
+              if (node && otherDragLayer && idleLayer) {
+                node.position({ x: piece.current_x, y: piece.current_y });
+                node.moveTo(idleLayer);
+                otherDragLayer.batchDraw();
+                idleLayer.batchDraw();
+              }
+
+              // Emit drop event
+              socket.emit('broadcast', {
+                roomId: roomConfig.roomId,
+                event: 'piece-drop',
+                payload: { pieces: [{ piece_id: piece.piece_id, current_x: piece.current_x, current_y: piece.current_y, locked_by: null, is_snapped: false }] }
+              });
+            }
+            bot.state = 'IDLE';
+          }
+        } else {
+          // Easing: easeInOutCubic
+          const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+          
+          // Quadratic Bezier interpolation
+          const t = ease;
+          const mt = 1 - t;
+          bot.x = mt * mt * bot.startX + 2 * mt * t * bot.controlX + t * t * bot.targetX;
+          bot.y = mt * mt * bot.startY + 2 * mt * t * bot.controlY + t * t * bot.targetY;
+          
+          if (bot.state === 'DRAGGING_PIECE') {
+            // Move piece
+            const piece = piecesRef.current.find(p => p.piece_id === bot.targetPieceId);
+            if (piece && piece.locked_by === bot.id) {
+              piece.current_x = bot.x - PIECE_WIDTH / 2;
+              piece.current_y = bot.y - PIECE_HEIGHT / 2;
+              
+              const node = stage.findOne(`#piece-${piece.piece_id}`);
+              if (node) {
+                node.position({ x: piece.current_x, y: piece.current_y });
+                const otherDragLayer = stage.findOne('#other-drag-layer') as any;
+                if (otherDragLayer) otherDragLayer.batchDraw();
+              }
+
+              // Emit move event periodically
+              if (now - bot.lastMoveEmit > 50) {
+                bot.lastMoveEmit = now;
+                socket.emit('broadcast', {
+                  roomId: roomConfig.roomId,
+                  event: 'piece-move',
+                  payload: { pieces: [{ piece_id: piece.piece_id, current_x: piece.current_x, current_y: piece.current_y }], locked_by: bot.id }
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // Update bot cursor locally
+      const cursorsLayer = cursorsLayerRef.current;
+      if (cursorsLayer) {
+        let cursorGroup = cursorsLayer.findOne(`#cursor-${bot.id}`) as Konva.Group;
+        if (!cursorGroup) {
+          const invScale = 1 / stageScale.current;
+          cursorGroup = new Konva.Group({
+            id: `cursor-${bot.id}`,
+            x: bot.x,
+            y: bot.y,
+            scaleX: invScale,
+            scaleY: invScale,
+          });
+
+          const path = new Konva.Path({
+            data: 'M5.5 22.5L2.5 2.5L22.5 9.5L13.5 13.5L5.5 22.5Z',
+            fill: bot.color,
+            stroke: 'white',
+            strokeWidth: 2,
+            shadowColor: 'black',
+            shadowBlur: 4,
+            shadowOffset: { x: 2, y: 2 },
+            shadowOpacity: 0.3,
+          });
+
+          const text = new Konva.Text({
+            text: bot.name,
+            fill: 'white',
+            fontSize: 14,
+            fontFamily: 'sans-serif',
+            fontStyle: 'bold',
+            x: 15,
+            y: 15,
+            shadowColor: 'black',
+            shadowBlur: 2,
+            shadowOffset: { x: 1, y: 1 },
+            shadowOpacity: 0.8,
+          });
+
+          cursorGroup.add(path);
+          cursorGroup.add(text);
+          cursorsLayer.add(cursorGroup);
+        } else {
+          cursorGroup.position({ x: bot.x, y: bot.y });
+        }
+        cursorsLayer.batchDraw();
+      }
+
+      // Emit mouse-move for bot periodically
+      if (now - bot.lastMouseEmit > 50) {
+        bot.lastMouseEmit = now;
+        socket.emit('broadcast', {
+          roomId: roomConfig.roomId,
+          event: 'mouse-move',
+          payload: { x: bot.x, y: bot.y, userId: bot.id, name: bot.name, color: bot.color }
+        });
+      }
+
+      animationFrameId = requestAnimationFrame(botTick);
+    };
+
+    if (isBotRunning) {
+      botRef.current.active = true;
+      botRef.current.lastUpdate = Date.now();
+      botRef.current.lastMoveEmit = 0;
+      botRef.current.lastMouseEmit = 0;
+      animationFrameId = requestAnimationFrame(botTick);
+    } else {
+      botRef.current.active = false;
+      // Hide cursor
+      const cursorsLayer = cursorsLayerRef.current;
+      if (cursorsLayer) {
+        const cursorGroup = cursorsLayer.findOne(`#cursor-${botRef.current.id}`);
+        if (cursorGroup) {
+          cursorGroup.destroy();
+          cursorsLayer.batchDraw();
+        }
+      }
+    }
+
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
+  }, [isBotRunning, botMode, GRID_COLS, GRID_ROWS, BOARD_WIDTH, BOARD_HEIGHT, getColRow, roomConfig.roomId]);
 
   const startDraggingGroup = (pieceId: number, stage: Konva.Stage) => {
     const piece = piecesRef.current.find(p => p.piece_id === pieceId);
@@ -819,9 +1472,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       idleLayer.batchDraw();
     }
 
-    setPieces((prev) => prev.map(p => 
+    piecesRef.current = piecesRef.current.map(p => 
       groupIds.includes(p.piece_id) ? { ...p, locked_by: userId } : p
-    ));
+    );
 
     socket.emit('broadcast', {
       roomId: roomConfig.roomId,
@@ -994,7 +1647,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     if (idleLayer && myDragLayer) {
       groupIds.forEach(id => {
         const node = stage.findOne(`#piece-${id}`);
-        if (node) node.moveTo(idleLayer);
+        if (node) {
+          node.moveTo(idleLayer);
+        }
       });
       myDragLayer.batchDraw();
       idleLayer.batchDraw();
@@ -1112,15 +1767,13 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       setSelectedPieceId(null);
     }
 
-    setPieces((prev) =>
-      prev.map((p) => {
-        const fp = finalPieces.find(f => f.piece_id === p.piece_id);
-        if (fp) {
-          return { ...p, current_x: fp.current_x, current_y: fp.current_y, locked_by: null, is_snapped: isSnapped };
-        }
-        return p;
-      })
-    );
+    piecesRef.current = piecesRef.current.map((p) => {
+      const fp = finalPieces.find(f => f.piece_id === p.piece_id);
+      if (fp) {
+        return { ...p, current_x: fp.current_x, current_y: fp.current_y, locked_by: null, is_snapped: isSnapped };
+      }
+      return p;
+    });
 
     socket.emit('broadcast', {
       roomId: roomConfig.roomId,
@@ -1217,7 +1870,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     updateCursorsScale(newScale);
   };
 
-  const completedCount = pieces.filter(p => p.is_snapped).length;
+  const completedCount = piecesRef.current.filter(p => p.is_snapped).length;
   const isCompleted = completedCount === GRID_COLS * GRID_ROWS && completedCount > 0;
 
   useEffect(() => {
@@ -1288,7 +1941,9 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     const isSelected = selectedPieceId === piece.piece_id;
 
     return (
-      <Group
+      <CachedGroup
+        piece={piece}
+        isSelected={isSelected}
         key={piece.piece_id}
         id={`piece-${piece.piece_id}`}
         name="piece-group"
@@ -1381,16 +2036,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             perfectDrawEnabled={false}
           />
         )}
-      </Group>
+      </CachedGroup>
     );
-  };
-
-  const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
   const handleCopyLink = () => {
@@ -1482,6 +2129,43 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           <p className="text-slate-400 text-sm mt-1">Drag pieces to the board. Syncs in real-time.</p>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto">
+          <button
+            onClick={() => {
+              if (isBotRunning && botMode === 'EDGE') {
+                setIsBotRunning(false);
+              } else {
+                setBotMode('EDGE');
+                setIsBotRunning(true);
+              }
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full border text-sm transition-colors pointer-events-auto ${
+              isBotRunning && botMode === 'EDGE'
+                ? 'bg-fuchsia-600/80 hover:bg-fuchsia-500 border-fuchsia-500/50 text-white' 
+                : 'bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-300'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            {isBotRunning && botMode === 'EDGE' ? '봇 중지' : '테두리 찾기'}
+          </button>
+          
+          <button
+            onClick={() => {
+              if (isBotRunning && botMode === 'COLOR') {
+                setIsBotRunning(false);
+              } else {
+                setBotMode('COLOR');
+                setIsBotRunning(true);
+              }
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full border text-sm transition-colors pointer-events-auto ${
+              isBotRunning && botMode === 'COLOR'
+                ? 'bg-emerald-600/80 hover:bg-emerald-500 border-emerald-500/50 text-white' 
+                : 'bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-300'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            {isBotRunning && botMode === 'COLOR' ? '봇 중지' : '색상별 모으기'}
+          </button>
           <button 
             onClick={handleCopyLink}
             className="flex items-center gap-2 bg-indigo-600/80 hover:bg-indigo-500 backdrop-blur-md px-4 py-2 rounded-full border border-indigo-500/50 text-white text-sm transition-colors"
@@ -1503,7 +2187,7 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           </div>
           <div className="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 flex items-center gap-2">
             <Clock className="w-4 h-4 text-indigo-400" />
-            <span className="text-white font-medium font-mono">{formatTime(playTime)}</span>
+            <PlayTimeDisplay />
           </div>
           <button
             onClick={() => setShowLeaderboard(true)}
@@ -1685,11 +2369,11 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         </Layer>
 
         <Layer id="snapped-layer">
-          {pieces.filter(p => p.is_snapped).map(renderPiece)}
+          {piecesRef.current.filter(p => p.is_snapped).map(renderPiece)}
         </Layer>
 
         <Layer id="idle-layer">
-          {pieces.filter(p => !p.is_snapped).map(renderPiece)}
+          {piecesRef.current.filter(p => !p.is_snapped).map(renderPiece)}
         </Layer>
 
         <Layer id="other-drag-layer" ref={otherDragLayerRef} />

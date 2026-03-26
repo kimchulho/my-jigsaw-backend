@@ -404,15 +404,14 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         }
       }
 
-      // Sort pieces by color (HSL) to divide into 9 equal groups
-      const numGroups = Math.min(9, pieceRGBs.length);
-      if (numGroups > 0) {
-        const pieceScores = pieceRGBs.map(p => {
+      // Extract prominent colors using K-means on Cartesian HSL space
+      const k = Math.min(9, pieceRGBs.length);
+      if (k > 0) {
+        const data = pieceRGBs.map(p => {
           let [r, g, b] = p.rgb;
           r /= 255; g /= 255; b /= 255;
           const max = Math.max(r, g, b), min = Math.min(r, g, b);
           let h = 0, s = 0, l = (max + min) / 2;
-
           if (max !== min) {
             const d = max - min;
             s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
@@ -423,33 +422,80 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             }
             h /= 6;
           }
-          h *= 360;
+          const h_rad = h * Math.PI * 2;
+          // Cartesian HSL: x and y represent hue and saturation, z represents lightness
+          return {
+            pieceId: p.pieceId,
+            vec: [s * Math.cos(h_rad) * 100, s * Math.sin(h_rad) * 100, l * 100]
+          };
+        });
 
-          // Create a 1D sorting score
-          let score = 0;
-          if (l < 0.15) {
-            score = l; // 0 to 0.15 (Blacks)
-          } else if (l > 0.85) {
-            score = 1000 + l; // 1000+ (Whites)
-          } else if (s < 0.15) {
-            score = 100 + l; // 100 to 101 (Grays)
-          } else {
-            // Shift hue by 60 degrees so red (0/360) is continuous
-            let shiftedHue = (h + 60) % 360;
-            score = 200 + shiftedHue; // 200 to 560
+        const centroids: number[][] = [];
+        // Furthest First Traversal initialization (finds the most distinct color peaks)
+        centroids.push([...data[0].vec]);
+        while (centroids.length < k) {
+          let maxDist = -1;
+          let bestVec = data[0].vec;
+          for (let i = 0; i < data.length; i++) {
+            let minDistToCentroids = Infinity;
+            for (let c = 0; c < centroids.length; c++) {
+              const dist = Math.pow(data[i].vec[0] - centroids[c][0], 2) +
+                           Math.pow(data[i].vec[1] - centroids[c][1], 2) +
+                           Math.pow(data[i].vec[2] - centroids[c][2], 2);
+              if (dist < minDistToCentroids) minDistToCentroids = dist;
+            }
+            if (minDistToCentroids > maxDist) {
+              maxDist = minDistToCentroids;
+              bestVec = data[i].vec;
+            }
           }
-          return { pieceId: p.pieceId, score };
-        });
+          centroids.push([...bestVec]);
+        }
 
-        // Sort by score
-        pieceScores.sort((a, b) => a.score - b.score);
+        // K-means iterations to center the peaks
+        const assignments = new Array(data.length).fill(0);
+        for (let iter = 0; iter < 20; iter++) {
+          let changed = false;
+          for (let i = 0; i < data.length; i++) {
+            let minDist = Infinity;
+            let bestCluster = 0;
+            for (let c = 0; c < centroids.length; c++) {
+              const dist = Math.pow(data[i].vec[0] - centroids[c][0], 2) +
+                           Math.pow(data[i].vec[1] - centroids[c][1], 2) +
+                           Math.pow(data[i].vec[2] - centroids[c][2], 2);
+              if (dist < minDist) {
+                minDist = dist;
+                bestCluster = c;
+              }
+            }
+            if (assignments[i] !== bestCluster) {
+              assignments[i] = bestCluster;
+              changed = true;
+            }
+          }
+          if (!changed) break;
 
-        // Divide into 9 equal chunks
-        const piecesPerGroup = Math.ceil(pieceScores.length / numGroups);
-        pieceScores.forEach((p, index) => {
-          const groupIndex = Math.floor(index / piecesPerGroup);
-          pieceColorsRef.current[p.pieceId] = Math.min(groupIndex, numGroups - 1).toString();
-        });
+          const sums = Array(k).fill(0).map(() => [0, 0, 0]);
+          const counts = Array(k).fill(0);
+          for (let i = 0; i < data.length; i++) {
+            const cluster = assignments[i];
+            counts[cluster]++;
+            sums[cluster][0] += data[i].vec[0];
+            sums[cluster][1] += data[i].vec[1];
+            sums[cluster][2] += data[i].vec[2];
+          }
+          for (let c = 0; c < k; c++) {
+            if (counts[c] > 0) {
+              centroids[c][0] = sums[c][0] / counts[c];
+              centroids[c][1] = sums[c][1] / counts[c];
+              centroids[c][2] = sums[c][2] / counts[c];
+            }
+          }
+        }
+
+        for (let i = 0; i < data.length; i++) {
+          pieceColorsRef.current[data[i].pieceId] = assignments[i].toString();
+        }
       }
 
       setPieceImages(images);

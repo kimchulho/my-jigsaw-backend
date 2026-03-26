@@ -181,6 +181,11 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
   
   const [isBotRunning, setIsBotRunning] = useState(false);
   const [botMode, setBotMode] = useState<'EDGE' | 'COLOR'>('EDGE');
+  const [botSpeed, setBotSpeed] = useState(5);
+  const botSpeedRef = useRef(5);
+  useEffect(() => {
+    botSpeedRef.current = botSpeed;
+  }, [botSpeed]);
   const botRef = useRef({
     active: false,
     id: 'bot-' + Math.random().toString(36).substr(2, 9),
@@ -1050,7 +1055,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
         
         // Human-like duration: base time + time per pixel
         const speedMultiplier = state === 'DRAGGING_PIECE' ? 1.5 : 1.0;
-        bot.moveDuration = 400 + dist * speedMultiplier;
+        const speedFactor = Math.pow(0.7, botSpeedRef.current - 5);
+        bot.moveDuration = (400 + dist * speedMultiplier) * speedFactor;
         
         const midX = (bot.x + targetX) / 2;
         const midY = (bot.y + targetY) / 2;
@@ -1116,7 +1122,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           setupBotMove(driftX, driftY, 'SEARCHING');
           
           // Override duration to simulate search time (1.5s to 3.5s)
-          bot.moveDuration = 1500 + Math.random() * 2000;
+          const speedFactor = Math.pow(0.7, botSpeedRef.current - 5);
+          bot.moveDuration = (1500 + Math.random() * 2000) * speedFactor;
         } else {
           // No more pieces to move
           bot.active = false;
@@ -2241,6 +2248,17 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           <p className="text-slate-400 text-sm mt-1">Drag pieces to the board. Syncs in real-time.</p>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto">
+          <div className="flex items-center gap-2 bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-700 pointer-events-auto">
+            <span className="text-slate-300 text-sm whitespace-nowrap">봇 속도: {botSpeed}</span>
+            <input 
+              type="range" 
+              min="1" 
+              max="10" 
+              value={botSpeed} 
+              onChange={(e) => setBotSpeed(parseInt(e.target.value))}
+              className="w-24 accent-indigo-500"
+            />
+          </div>
           <button
             onClick={() => {
               if (isBotRunning && botMode === 'EDGE') {

@@ -342,6 +342,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
       const tabSize = Math.min(PIECE_WIDTH, PIECE_HEIGHT) * TAB_SIZE_RATIO;
       const padding = tabSize;
 
+      const pieceRGBs: { pieceId: number, rgb: number[] }[] = [];
+
       for (let row = 0; row < GRID_ROWS; row++) {
         for (let col = 0; col < GRID_COLS; col++) {
           const canvas = document.createElement('canvas');
@@ -386,37 +388,8 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
               g = Math.floor(g / count);
               b = Math.floor(b / count);
               
-              // Convert RGB to HSL
-              r /= 255; g /= 255; b /= 255;
-              const max = Math.max(r, g, b), min = Math.min(r, g, b);
-              let h = 0, s = 0, l = (max + min) / 2;
-
-              if (max !== min) {
-                const d = max - min;
-                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                switch (max) {
-                  case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-                  case g: h = (b - r) / d + 2; break;
-                  case b: h = (r - g) / d + 4; break;
-                }
-                h /= 6;
-              }
-
-              let colorGroup = 'gray';
-              if (l < 0.2) colorGroup = 'black';
-              else if (l > 0.8) colorGroup = 'white';
-              else if (s < 0.2) colorGroup = 'gray';
-              else {
-                h = h * 360;
-                if (h < 30 || h >= 330) colorGroup = 'red';
-                else if (h < 90) colorGroup = 'yellow';
-                else if (h < 150) colorGroup = 'green';
-                else if (h < 210) colorGroup = 'cyan';
-                else if (h < 270) colorGroup = 'blue';
-                else if (h < 330) colorGroup = 'magenta';
-              }
               const pieceId = row * GRID_COLS + col;
-              pieceColorsRef.current[pieceId] = colorGroup;
+              pieceRGBs.push({ pieceId, rgb: [r, g, b] });
             }
           } catch (e) {
             // Ignore cross-origin errors if any
@@ -425,6 +398,66 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
           images[`${col}-${row}`] = canvas;
         }
       }
+
+      // K-means clustering to find 9 dominant colors
+      const k = Math.min(9, pieceRGBs.length);
+      if (k > 0) {
+        const data = pieceRGBs.map(p => p.rgb);
+        const centroids: number[][] = [];
+        const indices = new Set<number>();
+        while (centroids.length < k) {
+          const idx = Math.floor(Math.random() * data.length);
+          if (!indices.has(idx)) {
+            indices.add(idx);
+            centroids.push([...data[idx]]);
+          }
+        }
+
+        const assignments = new Array(data.length).fill(0);
+        for (let iter = 0; iter < 20; iter++) {
+          let changed = false;
+          for (let i = 0; i < data.length; i++) {
+            let minDist = Infinity;
+            let bestCluster = 0;
+            for (let c = 0; c < centroids.length; c++) {
+              const dist = Math.pow(data[i][0] - centroids[c][0], 2) + 
+                           Math.pow(data[i][1] - centroids[c][1], 2) + 
+                           Math.pow(data[i][2] - centroids[c][2], 2);
+              if (dist < minDist) {
+                minDist = dist;
+                bestCluster = c;
+              }
+            }
+            if (assignments[i] !== bestCluster) {
+              assignments[i] = bestCluster;
+              changed = true;
+            }
+          }
+          if (!changed) break;
+
+          const sums = Array(k).fill(0).map(() => [0, 0, 0]);
+          const counts = Array(k).fill(0);
+          for (let i = 0; i < data.length; i++) {
+            const cluster = assignments[i];
+            counts[cluster]++;
+            sums[cluster][0] += data[i][0];
+            sums[cluster][1] += data[i][1];
+            sums[cluster][2] += data[i][2];
+          }
+          for (let c = 0; c < k; c++) {
+            if (counts[c] > 0) {
+              centroids[c][0] = sums[c][0] / counts[c];
+              centroids[c][1] = sums[c][1] / counts[c];
+              centroids[c][2] = sums[c][2] / counts[c];
+            }
+          }
+        }
+
+        for (let i = 0; i < pieceRGBs.length; i++) {
+          pieceColorsRef.current[pieceRGBs[i].pieceId] = assignments[i].toString();
+        }
+      }
+
       setPieceImages(images);
       setImagesReady(true);
     };
@@ -952,22 +985,22 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
     let animationFrameId: number;
 
     const getColorZone = (pieceId: number) => {
-      const colorGroup = pieceColorsRef.current[pieceId] || 'gray';
+      const colorGroup = pieceColorsRef.current[pieceId] || '0';
       const zoneW = BOARD_WIDTH / 1.5;
       const zoneH = BOARD_HEIGHT / 1.5;
       const margin = 150;
       const colorZones: Record<string, { x: number, y: number, w: number, h: number }> = {
-        'red': { x: -zoneW - margin, y: -zoneH - margin, w: zoneW, h: zoneH },
-        'yellow': { x: BOARD_WIDTH / 2 - zoneW / 2, y: -zoneH - margin, w: zoneW, h: zoneH },
-        'green': { x: BOARD_WIDTH + margin, y: -zoneH - margin, w: zoneW, h: zoneH },
-        'cyan': { x: BOARD_WIDTH + margin, y: BOARD_HEIGHT / 2 - zoneH / 2, w: zoneW, h: zoneH },
-        'blue': { x: BOARD_WIDTH + margin, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
-        'magenta': { x: BOARD_WIDTH / 2 - zoneW / 2, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
-        'white': { x: -zoneW - margin, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
-        'gray': { x: -zoneW - margin, y: BOARD_HEIGHT / 2 - zoneH / 2, w: zoneW, h: zoneH },
-        'black': { x: BOARD_WIDTH / 2 - zoneW / 2, y: BOARD_HEIGHT + margin + zoneH + 50, w: zoneW, h: zoneH },
+        '0': { x: -zoneW - margin, y: -zoneH - margin, w: zoneW, h: zoneH },
+        '1': { x: BOARD_WIDTH / 2 - zoneW / 2, y: -zoneH - margin, w: zoneW, h: zoneH },
+        '2': { x: BOARD_WIDTH + margin, y: -zoneH - margin, w: zoneW, h: zoneH },
+        '3': { x: BOARD_WIDTH + margin, y: BOARD_HEIGHT / 2 - zoneH / 2, w: zoneW, h: zoneH },
+        '4': { x: BOARD_WIDTH + margin, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
+        '5': { x: BOARD_WIDTH / 2 - zoneW / 2, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
+        '6': { x: -zoneW - margin, y: BOARD_HEIGHT + margin, w: zoneW, h: zoneH },
+        '7': { x: -zoneW - margin, y: BOARD_HEIGHT / 2 - zoneH / 2, w: zoneW, h: zoneH },
+        '8': { x: BOARD_WIDTH / 2 - zoneW / 2, y: BOARD_HEIGHT + margin + zoneH + 50, w: zoneW, h: zoneH },
       };
-      return colorZones[colorGroup] || colorZones['gray'];
+      return colorZones[colorGroup] || colorZones['0'];
     };
 
     const botTick = () => {

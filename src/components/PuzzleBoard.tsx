@@ -1302,8 +1302,75 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
             const piece = piecesRef.current.find(p => p.piece_id === bot.targetPieceId);
             if (piece && piece.locked_by === bot.id) {
               piece.locked_by = null;
-              piece.current_x = bot.x - PIECE_WIDTH / 2;
-              piece.current_y = bot.y - PIECE_HEIGHT / 2;
+              
+              let finalX = bot.x - PIECE_WIDTH / 2;
+              let finalY = bot.y - PIECE_HEIGHT / 2;
+              
+              const checkOverlap = (x: number, y: number) => {
+                return piecesRef.current.some(p => {
+                  if (p.piece_id === piece.piece_id) return false;
+                  const dx = x - p.current_x;
+                  const dy = y - p.current_y;
+                  return dx * dx + dy * dy < (PIECE_WIDTH * 1.6) * (PIECE_WIDTH * 1.6);
+                });
+              };
+              
+              if (checkOverlap(finalX, finalY)) {
+                let found = false;
+                const stepX = PIECE_WIDTH * 1.6;
+                const stepY = PIECE_HEIGHT * 1.6;
+
+                if (botMode === 'EDGE') {
+                  const { col, row } = getColRow(piece.piece_id);
+                  let minX = 0;
+                  let maxX = Math.max(0, BOARD_WIDTH - PIECE_WIDTH);
+                  let minY = 0;
+                  let maxY = Math.max(0, BOARD_HEIGHT - PIECE_HEIGHT);
+                  
+                  if (row === 0) maxY = Math.min(maxY, PIECE_HEIGHT * 3);
+                  else if (row === GRID_ROWS - 1) minY = Math.max(0, maxY - PIECE_HEIGHT * 3);
+                  else if (col === 0) maxX = Math.min(maxX, PIECE_WIDTH * 3);
+                  else if (col === GRID_COLS - 1) minX = Math.max(0, maxX - PIECE_WIDTH * 3);
+
+                  const cols = Math.max(1, Math.floor((maxX - minX) / stepX));
+                  const rows = Math.max(1, Math.floor((maxY - minY) / stepY));
+                  
+                  for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                      const testX = minX + c * stepX;
+                      const testY = minY + r * stepY;
+                      if (!checkOverlap(testX, testY)) {
+                        finalX = testX;
+                        finalY = testY;
+                        found = true;
+                        break;
+                      }
+                    }
+                    if (found) break;
+                  }
+                } else {
+                  const zone = getColorZone(piece.piece_id);
+                  const cols = Math.floor(zone.w / stepX);
+                  const rows = Math.floor(zone.h / stepY);
+                  
+                  for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                      const testX = zone.x + c * stepX;
+                      const testY = zone.y + r * stepY;
+                      if (!checkOverlap(testX, testY)) {
+                        finalX = testX;
+                        finalY = testY;
+                        found = true;
+                        break;
+                      }
+                    }
+                    if (found) break;
+                  }
+                }
+              }
+
+              piece.current_x = finalX;
+              piece.current_y = finalY;
 
               const node = stage.findOne(`#piece-${piece.piece_id}`);
               const otherDragLayer = stage.findOne('#other-drag-layer') as any;

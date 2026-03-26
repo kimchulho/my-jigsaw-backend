@@ -1321,6 +1321,18 @@ export default function PuzzleBoard({ onBack, username, roomConfig }: PuzzleBoar
                 event: 'piece-drop',
                 payload: { pieces: [{ piece_id: piece.piece_id, current_x: piece.current_x, current_y: piece.current_y, locked_by: null, is_snapped: false }] }
               });
+
+              // Save to database
+              socket.emit('upsert_pieces', {
+                roomId: roomConfig.roomId,
+                pieces: [{
+                  piece_id: piece.piece_id,
+                  current_x: piece.current_x,
+                  current_y: piece.current_y,
+                  locked_by: null,
+                  is_snapped: false
+                }]
+              });
             }
             bot.state = 'IDLE';
           }
